@@ -84,17 +84,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
             )}
             <p className="truncate text-lg font-semibold leading-tight">{here}</p>
           </div>
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">{subtitle}</p>
+          <p className="mt-0.5 text-sm leading-snug text-muted-foreground">{subtitle}</p>
         </div>
-        {snapshot.weather ? (
-          <Badge className="shrink-0 gap-1.5 text-foreground">
-            <WeatherGlyph code={snapshot.weather.weatherCode} />
-            {snapshot.weather.tempC}°
-            <span className="hidden text-muted-foreground sm:inline">
-              {locale === 'de' ? snapshot.weather.labelDe : snapshot.weather.labelEn}
-            </span>
-          </Badge>
-        ) : null}
       </div>
       <p className="mt-2 text-sm leading-snug text-foreground">{snapshot.narrative}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -149,19 +140,32 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           </Badge>
         ) : null}
       </div>
-      {error ? (
-        <p className="mt-2 text-xs text-muted-foreground" role="status">
-          {t('statusError')}
-        </p>
-      ) : snapshot.seenAt ? (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale) })}
-        </p>
-      ) : snapshot.tracking === 'no-key' ? (
-        <p className="mt-2 text-xs text-muted-foreground">{t('approxNoKey')}</p>
-      ) : snapshot.tracking === 'ais-error' ? (
-        <p className="mt-2 text-xs text-muted-foreground">{t('approxAisError')}</p>
-      ) : null}
+      <div className="mt-2 flex items-end justify-between gap-3">
+        {error ? (
+          <p className="min-w-0 text-xs text-muted-foreground" role="status">
+            {t('statusError')}
+          </p>
+        ) : snapshot.seenAt ? (
+          <p className="min-w-0 text-xs text-muted-foreground">
+            {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale) })}
+          </p>
+        ) : snapshot.tracking === 'no-key' ? (
+          <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>
+        ) : snapshot.tracking === 'ais-error' ? (
+          <p className="min-w-0 text-xs text-muted-foreground">{t('approxAisError')}</p>
+        ) : (
+          <span />
+        )}
+        {snapshot.weather ? (
+          <Badge
+            className="shrink-0 gap-1 text-foreground"
+            aria-label={`${snapshot.weather.tempC}°, ${locale === 'de' ? snapshot.weather.labelDe : snapshot.weather.labelEn}`}
+          >
+            <WeatherGlyph code={snapshot.weather.weatherCode} />
+            {snapshot.weather.tempC}°
+          </Badge>
+        ) : null}
+      </div>
     </Card>
   )
 }

@@ -22,6 +22,7 @@ import {
   sessionIsValid,
 } from './auth.ts'
 import { fetchWeather } from './weather.ts'
+import { getStoredTrip, parseTrip, saveStoredTrip } from './trip-store.ts'
 
 config()
 
@@ -132,6 +133,17 @@ app.get('/api/status', (c) => {
     llmConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
     aisError: aisError(),
   })
+})
+
+app.get('/api/trip', (c) => {
+  return c.json({ trip: getStoredTrip() })
+})
+
+app.put('/api/trip', async (c) => {
+  const trip = parseTrip(await c.req.json().catch(() => null))
+  if (!trip) return c.json({ error: 'invalid_trip' }, 400)
+  await saveStoredTrip(trip)
+  return c.json({ trip })
 })
 
 app.post('/api/snapshot', async (c) => {

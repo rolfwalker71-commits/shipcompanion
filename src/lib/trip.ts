@@ -25,6 +25,27 @@ export function clearTrip(): void {
   localStorage.removeItem(KEY)
 }
 
+export async function fetchRemoteTrip(): Promise<Trip | null> {
+  const res = await fetch('/api/trip', { credentials: 'include' })
+  if (!res.ok) return null
+  const data = (await res.json()) as { trip?: Trip | null }
+  const trip = data.trip
+  if (!trip?.shipId || !trip.stops?.length) return null
+  return migrateTrip(trip)
+}
+
+export async function pushRemoteTrip(trip: Trip): Promise<void> {
+  const next = migrateTrip(trip)
+  saveTrip(next)
+  const res = await fetch('/api/trip', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(next),
+  })
+  if (!res.ok) throw new Error('trip save failed')
+}
+
 function migrateTrip(trip: Trip): Trip {
   const preset = presetById(trip.presetId)
   if (!preset) return trip

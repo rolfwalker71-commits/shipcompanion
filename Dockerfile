@@ -14,5 +14,6 @@ RUN npm ci --omit=dev && npm install tsx@4.23.12
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/shared ./shared
+RUN mkdir -p data
 EXPOSE 3344
 CMD ["npx", "tsx", "server/index.ts"]

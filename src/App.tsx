@@ -6,20 +6,55 @@ import { LoginScreen } from '@/components/LoginScreen'
 import { TripSetupDialog } from '@/components/onboarding/TripSetupDialog'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { useAuth } from '@/lib/auth'
-import { loadTrip, saveTrip } from '@/lib/trip'
+import { fetchRemoteTrip, loadTrip, pushRemoteTrip, saveTrip } from '@/lib/trip'
 import type { Trip } from '@shared/types.ts'
 
 export default function App() {
   const { ready, signedIn } = useAuth()
-  const [trip, setTrip] = useState<Trip | null>(() => loadTrip())
+  const [trip, setTrip] = useState<Trip | null>(null)
+  const [tripReady, setTripReady] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
-    if (signedIn && !trip) setSetupOpen(true)
-  }, [signedIn, trip])
+    if (!signedIn) {
+      setTripReady(false)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const remote = await fetchRemoteTrip()
+        if (cancelled) return
+        if (remote) {
+          saveTrip(remote)
+          setTrip(remote)
+        } else {
+          const local = loadTrip()
+          if (local) {
+            await pushRemoteTrip(local)
+            if (cancelled) return
+            setTrip(local)
+          } else {
+            setTrip(null)
+          }
+        }
+      } catch {
+        if (!cancelled) setTrip(loadTrip())
+      } finally {
+        if (!cancelled) setTripReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [signedIn])
 
-  if (!ready) {
+  useEffect(() => {
+    if (signedIn && tripReady && !trip) setSetupOpen(true)
+  }, [signedIn, trip, tripReady])
+
+  if (!ready || (signedIn && !tripReady)) {
     return <div className="min-h-dvh bg-background" />
   }
 
@@ -41,9 +76,16 @@ export default function App() {
           if (trip) setSetupOpen(open)
         }}
         onSave={(next) => {
-          saveTrip(next)
-          setTrip(next)
-          setSetupOpen(false)
+          void pushRemoteTrip(next)
+            .then(() => {
+              setTrip(next)
+              setSetupOpen(false)
+            })
+            .catch(() => {
+              saveTrip(next)
+              setTrip(next)
+              setSetupOpen(false)
+            })
         }}
       />
       <SettingsDialog

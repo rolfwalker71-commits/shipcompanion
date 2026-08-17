@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { readJsonSync, writeJson } from './persist.ts'
 
 type Session = {
   token: string
@@ -11,6 +12,15 @@ const loginAttempts = new Map<string, { count: number; resetAt: number }>()
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14
 const MAX_ATTEMPTS = 8
 const ATTEMPT_WINDOW_MS = 1000 * 60 * 10
+
+for (const row of readJsonSync<Session[]>('sessions.json', [])) {
+  if (row?.token && row.expiresAt > Date.now()) sessions.set(row.token, row)
+}
+
+function persistSessions(): void {
+  const rows = [...sessions.values()].filter((session) => session.expiresAt > Date.now())
+  void writeJson('sessions.json', rows)
+}
 
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest()
@@ -52,6 +62,7 @@ export function clearLoginAttempts(ip: string): void {
 export function createSession(): string {
   const token = randomBytes(32).toString('hex')
   sessions.set(token, { token, expiresAt: Date.now() + SESSION_TTL_MS })
+  persistSessions()
   return token
 }
 
@@ -61,13 +72,17 @@ export function sessionIsValid(token: string | undefined): boolean {
   if (!session) return false
   if (Date.now() > session.expiresAt) {
     sessions.delete(token)
+    persistSessions()
     return false
   }
   return true
 }
 
 export function destroySession(token: string | undefined): void {
-  if (token) sessions.delete(token)
+  if (token) {
+    sessions.delete(token)
+    persistSessions()
+  }
 }
 
 export const COOKIE_NAME = 'cruise_session'

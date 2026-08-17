@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    image: ghcr.io/rolfwalker71-commits/shipcompanion:latest
+    ports:
+      - "3344:3344"
+    env_file:
+      - .env
+    environment:
+      PORT: 3344
+      NODE_ENV: production
+    restart: unless-stopped

@@ -1,0 +1,184 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.975 0.012 85);
+  --foreground: oklch(0.22 0.04 260);
+  --card: oklch(0.995 0.004 85);
+  --card-foreground: oklch(0.22 0.04 260);
+  --primary: oklch(0.28 0.05 255);
+  --primary-foreground: oklch(0.98 0.01 85);
+  --secondary: oklch(0.94 0.02 85);
+  --secondary-foreground: oklch(0.28 0.04 255);
+  --muted: oklch(0.94 0.015 85);
+  --muted-foreground: oklch(0.48 0.03 255);
+  --accent: oklch(0.72 0.08 195);
+  --accent-foreground: oklch(0.22 0.04 260);
+  --destructive: oklch(0.58 0.2 25);
+  --border: oklch(0.9 0.015 85);
+  --input: oklch(0.9 0.015 85);
+  --ring: oklch(0.55 0.06 255);
+  --radius: 1rem;
+}
+
+.dark {
+  --background: oklch(0.21 0.04 260);
+  --foreground: oklch(0.97 0.01 85);
+  --card: oklch(0.26 0.04 260);
+  --card-foreground: oklch(0.97 0.01 85);
+  --primary: oklch(0.78 0.08 195);
+  --primary-foreground: oklch(0.18 0.03 260);
+  --secondary: oklch(0.32 0.035 260);
+  --secondary-foreground: oklch(0.97 0.01 85);
+  --muted: oklch(0.32 0.035 260);
+  --muted-foreground: oklch(0.78 0.02 85);
+  --accent: oklch(0.72 0.08 195);
+  --accent-foreground: oklch(0.18 0.03 260);
+  --destructive: oklch(0.7 0.18 25);
+  --border: oklch(0.36 0.03 260);
+  --input: oklch(0.36 0.03 260);
+  --ring: oklch(0.72 0.08 195);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 4px);
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+#root {
+  height: 100dvh;
+  min-height: 100dvh;
+}
+
+input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit-fields-wrapper,
+input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
+  color: var(--muted-foreground);
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  background: var(--muted);
+  font-family: var(--font-sans);
+}
+
+.leaflet-control-attribution {
+  background: color-mix(in oklab, var(--card) 85%, transparent);
+  color: var(--muted-foreground);
+}
+
+.cruise-div-icon {
+  background: transparent;
+  border: none;
+}
+
+.ship-marker {
+  display: flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground);
+  filter: drop-shadow(0 0 6px var(--card)) drop-shadow(0 2px 8px color-mix(in oklab, var(--foreground) 35%, transparent));
+}
+
+.ship-marker svg {
+  width: 36px;
+  height: 36px;
+}
+
+.port-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--foreground);
+  transform: translate(-50%, calc(-100% - 2px));
+  filter: drop-shadow(0 1px 4px color-mix(in oklab, var(--foreground) 25%, transparent));
+}
+
+.port-marker svg {
+  width: 28px;
+  height: 28px;
+}
+
+.port-marker-next svg {
+  width: 32px;
+  height: 32px;
+}
+
+.port-marker-past {
+  opacity: 0.45;
+  filter: none;
+}
+
+.port-marker-past svg {
+  width: 18px;
+  height: 18px;
+}
+
+.port-marker-later {
+  opacity: 0.8;
+}
+
+.port-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 2px;
+  padding: 0.15rem 0.5rem 0.2rem;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--card) 90%, transparent);
+}
+
+.port-marker-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
+.port-marker-time {
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}

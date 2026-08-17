@@ -1,0 +1,218 @@
+import { config } from 'dotenv'
+import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
+import { Hono } from 'hono'
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
+import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import type { SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
+import { estimatedPosition, findLeg, nearPort, routePath } from '../shared/geo.ts'
+import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, actualDeparture } from './ais.ts'
+import { fetchVesselFinder, vesselFinderConfigured, vesselFinderError } from './vesselfinder.ts'
+import {
+  COOKIE_NAME,
+  allowLoginAttempt,
+  createSession,
+  destroySession,
+  expectedAccessKey,
+  keysMatch,
+  sessionIsValid,
+} from './auth.ts'
+import { narrate } from './narrate.ts'
+import { fetchWeather } from './weather.ts'
+
+config()
+
+const isProd = process.env.NODE_ENV === 'production'
+const port = Number(isProd ? (process.env.PORT ?? 3344) : (process.env.API_PORT ?? 3345))
+
+const app = new Hono()
+
+function clientIp(headers: Headers): string {
+  return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local'
+}
+
+function requireSession() {
+  return async (
+    c: { req: { raw: Request }; json: (data: unknown, status?: number) => Response },
+    next: () => Promise<void>,
+  ) => {
+    const token = getCookie(c as never, COOKIE_NAME)
+    if (!sessionIsValid(token)) {
+      return c.json({ error: 'unauthorized' }, 401)
+    }
+    await next()
+  }
+}
+
+app.get('/api/health', (c) => c.json({ ok: true }))
+
+app.post('/api/auth/login', async (c) => {
+  const expected = expectedAccessKey()
+  if (!expected) {
+    return c.json({ error: 'server_misconfigured' }, 500)
+  }
+  const ip = clientIp(c.req.raw.headers)
+  if (!allowLoginAttempt(ip)) {
+    return c.json({ error: 'too_many_attempts' }, 429)
+  }
+  const body = (await c.req.json().catch(() => ({}))) as { key?: string }
+  if (!keysMatch(String(body.key ?? ''), expected)) {
+    return c.json({ error: 'invalid_key' }, 401)
+  }
+  const token = createSession()
+  setCookie(c, COOKIE_NAME, token, {
+    httpOnly: true,
+    path: '/',
+    sameSite: 'Lax',
+    secure: process.env.COOKIE_SECURE === 'true',
+    maxAge: 60 * 60 * 24 * 14,
+  })
+  return c.json({ ok: true })
+})
+
+app.post('/api/auth/logout', (c) => {
+  destroySession(getCookie(c, COOKIE_NAME))
+  deleteCookie(c, COOKIE_NAME, { path: '/' })
+  return c.json({ ok: true })
+})
+
+app.get('/api/auth/session', (c) => {
+  const token = getCookie(c, COOKIE_NAME)
+  if (!sessionIsValid(token)) return c.json({ ok: false }, 401)
+  return c.json({ ok: true })
+})
+
+app.use('/api/*', async (c, next) => {
+  if (c.req.path.startsWith('/api/auth/') || c.req.path === '/api/health') {
+    return next()
+  }
+  return requireSession()(c, next)
+})
+
+app.get('/api/status', (c) => {
+  return c.json({
+    aisConfigured: aisConfigured(),
+    vesselFinderConfigured: vesselFinderConfigured(),
+    llmConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
+    aisError: aisError(),
+  })
+})
+
+app.post('/api/snapshot', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as SnapshotRequest | null
+  if (!body?.mmsi || !body.shipName || !body.stops?.length) {
+    return c.json({ error: 'invalid_request' }, 400)
+  }
+
+  watchMmsi(body.mmsi, body.stops)
+  const now = new Date()
+  const leg = findLeg(body.stops, now)
+  if (!leg) return c.json({ error: 'no_route' }, 400)
+
+  const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
+  const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
+  const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 4000) : lastKnownPosition(body.mmsi)
+  const finderFix = vesselFinderConfigured()
+    ? await fetchVesselFinder(body.mmsi, body.imo).catch(() => null)
+    : null
+
+  const freshMs = 20 * 60 * 1000
+  const known = streamFix ?? lastKnownPosition(body.mmsi)
+  const streamFresh = known && now.getTime() - known.ts < freshMs
+  const finderFresh = finderFix && now.getTime() - finderFix.ts < freshMs
+  const liveFix = streamFresh ? known : finderFresh ? finderFix : null
+  const guessed = estimatedPosition(body.stops, now, liveFix ? null : known)
+  if (!guessed) return c.json({ error: 'no_route' }, 400)
+
+  const streamError = aisError()
+  const finderError = vesselFinderError(body.mmsi)
+  const hasTracker = aisConfigured()
+  const tracking = liveFix
+    ? 'live'
+    : !hasTracker
+      ? 'no-key'
+      : finderError || streamError
+        ? 'ais-error'
+        : 'estimated'
+
+  const position = liveFix
+    ? { lat: liveFix.lat, lng: liveFix.lng, source: 'live' as const }
+    : { ...guessed.point, source: 'approx' as const }
+
+  const next = guessed.next
+  const berth =
+    liveFix && leg.previous && nearPort(liveFix, leg.previous)
+      ? leg.previous
+      : liveFix && leg.atPort && nearPort(liveFix, leg.next)
+        ? leg.next
+        : !liveFix && guessed.atPort
+          ? guessed.next
+          : null
+  const atPort = Boolean(berth)
+  const shown = berth ?? next
+  const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
+  const following = berthIndex >= 0 ? (body.stops[berthIndex + 1] ?? null) : next
+  const destination = following ?? shown
+  const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
+  const weather =
+    (await weatherPromise) ??
+    (await fetchWeather(position.lat, position.lng, now).catch(() => null))
+  const narrative = await narrate({
+    shipName: body.shipName,
+    locale: body.locale,
+    lat: position.lat,
+    lng: position.lng,
+    currentPort: atPort ? loc(shown) : null,
+    nextPort: loc(destination),
+    arriveAt: destination.arriveAt,
+    departAt: atPort ? shown.departAt : null,
+    weather,
+    atPort,
+    zone: finderFix?.zone ?? null,
+    aisDestination: finderFix?.destination ?? null,
+  })
+
+  const lastStamp = liveFix ?? known ?? finderFix
+  const departStop = atPort ? shown : (leg.previous ?? null)
+  const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
+  const payload: SnapshotResponse = {
+    position,
+    tracking,
+    seenAt: lastStamp ? new Date(lastStamp.ts).toISOString() : null,
+    zone: finderFix?.zone ?? null,
+    nextPort: {
+      name: loc(destination),
+      arriveAt: destination.arriveAt,
+      lat: destination.lat,
+      lng: destination.lng,
+      atPort,
+      berthName: atPort ? loc(shown) : null,
+      departAt: atPort ? shown.departAt : null,
+    },
+    weather,
+    narrative,
+    path: routePath(body.stops),
+    departure: departStop
+      ? {
+          planned: departStop.departAt,
+          actual: actualTs ? new Date(actualTs).toISOString() : null,
+        }
+      : null,
+  }
+  return c.json(payload)
+})
+
+if (isProd && existsSync('dist/index.html')) {
+  app.use('/*', serveStatic({ root: './dist' }))
+  app.get('*', async (c) => {
+    const html = await readFile('dist/index.html', 'utf8')
+    return c.html(html)
+  })
+}
+
+serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
+  const keyReady = expectedAccessKey().length > 0
+  console.log(`Cruise Tracker API on http://0.0.0.0:${info.port}`)
+  if (!keyReady) console.warn('APP_ACCESS_KEY is empty — login will fail until it is set.')
+})

@@ -52,8 +52,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const reported = snapshot.voyage?.destination?.trim() || null
   const showReported =
     reported != null &&
-    reported.toLowerCase() !== here.toLowerCase() &&
-    reported.toLowerCase() !== nextName.toLowerCase()
+    !samePlace(reported, here) &&
+    !samePlace(reported, nextName)
   const showAisEta =
     !atPort &&
     snapshot.voyage?.eta &&
@@ -72,7 +72,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const zone = snapshot.zone?.trim() || null
 
   return (
-    <Card className="pointer-events-auto max-h-[min(42svh,22rem)] w-full max-w-2xl overflow-y-auto overscroll-contain px-3 py-2.5 shadow-xl ring-0 sm:max-h-none sm:px-4 sm:py-3">
+    <Card className="pointer-events-auto max-h-[min(42svh,22rem)] w-full min-w-0 max-w-2xl overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-2.5 shadow-xl ring-0 sm:max-h-none sm:px-4 sm:py-3">
       <div className="flex items-center gap-2 sm:gap-3">
         <Badge
           className={
@@ -98,7 +98,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
         {hasNext && atPort ? (
           <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
             <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
@@ -204,4 +204,11 @@ function compassDir(degrees: number, locale: 'de' | 'en'): string {
     locale === 'de' ? ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'] : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
   const sector = (((degrees % 360) + 360) % 360) / 45
   return dirs[Math.round(sector) % 8]
+}
+
+function samePlace(a: string, b: string): boolean {
+  const left = a.trim().toLowerCase()
+  const right = b.trim().toLowerCase()
+  if (!left || !right) return false
+  return left === right || left.includes(right) || right.includes(left)
 }

@@ -75,7 +75,9 @@ function destinationMatches(needle: string, ...labels: string[]): boolean {
   return labels.some((label) => {
     const hay = normalize(label)
     if (!hay) return false
-    return hay.includes(needle) || needle.includes(hay)
+    if (hay.includes(needle) || needle.includes(hay)) return true
+    const parts = needle.split(' ').filter((part) => part.length >= 4)
+    return parts.some((part) => hay.split(' ').some((token) => token.includes(part) || part.includes(token)))
   })
 }
 

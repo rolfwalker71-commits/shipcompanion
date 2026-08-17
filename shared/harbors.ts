@@ -33,7 +33,7 @@ const harbors: Record<string, Harbor> = {
     nameDe: 'La Spezia',
     lat: 44.106,
     lng: 9.8325, // Molo Garibaldi, west quay
-    aliases: ['la spezia', 'spezia', 'itspe'],
+    aliases: ['la spezia', 'spezia', 'lt spezia', 'lt spe', 'laspezia', 'itspe', 'it spe'],
   },
   civitavecchia: {
     id: 'civitavecchia',

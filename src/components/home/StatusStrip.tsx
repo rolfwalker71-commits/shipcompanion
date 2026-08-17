@@ -2,6 +2,7 @@ import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightnin
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
 import { formatSeen, formatWhen } from '@shared/time.ts'
+import { useCompactUi } from '@/lib/compact'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 
@@ -15,10 +16,12 @@ type StatusStripProps = {
 
 export function StatusStrip({ snapshot, error, locale, live, estimated }: StatusStripProps) {
   const { t } = useTranslation()
+  const compact = useCompactUi()
+  const when = (iso: string) => formatWhen(iso, locale, !compact)
 
   if (!snapshot) {
     return (
-      <Card className="pointer-events-auto w-full max-w-2xl px-4 py-3 shadow-xl ring-0">
+      <Card className="pointer-events-auto w-full max-w-2xl px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
         <p className="text-base font-semibold text-muted-foreground">
           {error ? t('statusError') : t('statusLoading')}
         </p>
@@ -44,8 +47,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         ? t('stillBerth')
         : t('navMoored')
     : nav === 'underway' || nav === 'restricted'
-      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, true)}`
-      : `${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, true)}`
+      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
+      : `${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
   const reported = snapshot.voyage?.destination?.trim() || null
   const showReported =
     reported != null &&
@@ -69,81 +72,85 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const zone = snapshot.zone?.trim() || null
 
   return (
-    <Card className="pointer-events-auto w-full max-w-2xl px-4 py-3 shadow-xl ring-0">
-      <div className="flex items-center gap-3">
+    <Card className="pointer-events-auto max-h-[min(42svh,22rem)] w-full max-w-2xl overflow-y-auto overscroll-contain px-3 py-2.5 shadow-xl ring-0 sm:max-h-none sm:px-4 sm:py-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         <Badge
           className={
             live
-              ? 'shrink-0 gap-1.5 bg-accent text-primary-foreground'
+              ? 'shrink-0 gap-1.5 bg-accent px-2 py-0.5 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
               : estimated
-                ? 'shrink-0 gap-1.5 bg-primary/10 text-primary'
-                : 'shrink-0'
+                ? 'shrink-0 gap-1.5 bg-primary/10 px-2 py-0.5 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
+                : 'shrink-0 px-2 py-0.5 text-xs sm:px-3 sm:py-1 sm:text-sm'
           }
         >
           {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
-          {live ? t('live') : t('approx')}
+          {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
         </Badge>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             {stopped ? (
-              <Anchor className="h-5 w-5 shrink-0 fill-teal-100 text-teal-600" aria-hidden />
+              <Anchor className="h-4 w-4 shrink-0 fill-teal-100 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
             ) : (
-              <Ship className="h-5 w-5 shrink-0 fill-sky-100 text-sky-700" aria-hidden />
+              <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
             )}
-            <p className="truncate text-lg font-semibold leading-tight">{here}</p>
+            <p className="truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
           </div>
-          <p className="mt-0.5 text-sm leading-snug text-muted-foreground">{subtitle}</p>
+          <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
         {hasNext && atPort ? (
-          <Badge className="gap-1.5 text-foreground">
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
             <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {nextName} • {formatWhen(snapshot.nextPort.arriveAt, locale, true)}
+            {nextName} • {when(snapshot.nextPort.arriveAt)}
           </Badge>
         ) : null}
         {showReported ? (
-          <Badge className="gap-1.5 text-foreground">{t('reportedDest', { name: reported ?? '' })}</Badge>
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
+            {t('reportedDest', { name: reported ?? '' })}
+          </Badge>
         ) : null}
         {showAisEta && snapshot.voyage?.eta ? (
-          <Badge className="gap-1.5 text-muted-foreground">
-            {t('aisEta', { time: formatWhen(snapshot.voyage.eta, locale, true) })}
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-muted-foreground sm:px-3 sm:py-1 sm:text-sm">
+            {t('aisEta', { time: when(snapshot.voyage.eta) })}
           </Badge>
         ) : null}
         {speedKmh != null ? (
-          <Badge className="gap-1.5 text-foreground">
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
             <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
             {t('speedKmh', { speed: speedKmh })}
           </Badge>
         ) : null}
         {course ? (
-          <Badge className="gap-1.5 text-foreground">
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
             <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
             {t('course', { dir: course.dir, deg: course.deg })}
           </Badge>
         ) : null}
         {zone ? (
-          <Badge className="gap-1.5 text-foreground">{t('seaZone', { name: zone })}</Badge>
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
+            {t('seaZone', { name: zone })}
+          </Badge>
         ) : null}
         {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
-          <Badge className="gap-1.5 text-foreground">
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
             <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
             {t('distanceLeft', { km: snapshot.distanceKm })}
           </Badge>
         ) : null}
         {snapshot.departure ? (
-          <Badge className="gap-1.5 whitespace-normal text-muted-foreground">
+          <Badge className="gap-1.5 whitespace-normal px-2 py-0.5 text-xs text-muted-foreground sm:px-3 sm:py-1 sm:text-sm">
             <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
-            {t('departPlanned')} {formatWhen(snapshot.departure.planned, locale, true)}
+            {t('departPlanned')} {when(snapshot.departure.planned)}
           </Badge>
         ) : null}
         {snapshot.departure?.actual ? (
-          <Badge className="gap-1.5 whitespace-normal text-foreground">
+          <Badge className="gap-1.5 whitespace-normal px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
             <Ship className="h-3.5 w-3.5 shrink-0 fill-emerald-100 text-emerald-600" aria-hidden />
-            {t('departActual')} {formatWhen(snapshot.departure.actual, locale, true)}
+            {t('departActual')} {when(snapshot.departure.actual)}
           </Badge>
         ) : snapshot.departure ? (
-          <Badge className="gap-1.5 text-muted-foreground">
+          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-muted-foreground sm:px-3 sm:py-1 sm:text-sm">
             <Ship className="h-3.5 w-3.5 shrink-0 fill-orange-100 text-orange-500" aria-hidden />
             {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
           </Badge>
@@ -156,7 +163,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           </p>
         ) : snapshot.seenAt ? (
           <p className="min-w-0 text-xs text-muted-foreground">
-            {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale) })}
+            {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}
           </p>
         ) : snapshot.tracking === 'no-key' ? (
           <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>
@@ -170,8 +177,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
             className="flex shrink-0 flex-col items-center gap-0.5"
             aria-label={`${snapshot.weather.tempC}°, ${locale === 'de' ? snapshot.weather.labelDe : snapshot.weather.labelEn}`}
           >
-            <WeatherGlyph code={snapshot.weather.weatherCode} className="h-6 w-6" />
-            <p className="text-base font-bold leading-none">{snapshot.weather.tempC}°</p>
+            <WeatherGlyph code={snapshot.weather.weatherCode} className="h-5 w-5 sm:h-6 sm:w-6" />
+            <p className="text-sm font-bold leading-none sm:text-base">{snapshot.weather.tempC}°</p>
           </div>
         ) : null}
       </div>

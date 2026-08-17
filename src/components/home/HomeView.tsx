@@ -95,7 +95,7 @@ export function HomeView({ trip }: HomeViewProps) {
         />
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center px-4 pt-2 sm:px-6">
+      <div className="pointer-events-none absolute inset-x-0 top-[calc(3.5rem+env(safe-area-inset-top,0px))] z-10 flex justify-center px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2 sm:px-6">
         <StatusStrip
           snapshot={snapshot}
           error={error}

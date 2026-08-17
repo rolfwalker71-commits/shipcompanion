@@ -33,7 +33,8 @@ export function LoginScreen() {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10 sm:px-6">
+    <main className="h-dvh overflow-y-auto overscroll-contain">
+      <div className="mx-auto flex min-h-full max-w-lg flex-col justify-center pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))] sm:px-6">
       <div className="mb-8 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
@@ -64,8 +65,8 @@ export function LoginScreen() {
         </div>
       </div>
       <form onSubmit={(event) => void onSubmit(event)} className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border/50">
-        <h2 className="text-3xl font-semibold leading-snug">{t('loginTitle')}</h2>
-        <p className="mt-3 text-lg leading-relaxed text-muted-foreground">{t('loginHint')}</p>
+        <h2 className="text-2xl font-semibold leading-snug sm:text-3xl">{t('loginTitle')}</h2>
+        <p className="mt-3 text-base leading-relaxed text-muted-foreground sm:text-lg">{t('loginHint')}</p>
         <div className="mt-8 space-y-2">
           <Label htmlFor="family-key">{t('loginPlaceholder')}</Label>
           <Input
@@ -86,6 +87,7 @@ export function LoginScreen() {
           {t('loginSubmit')}
         </Button>
       </form>
+      </div>
     </main>
   )
 }

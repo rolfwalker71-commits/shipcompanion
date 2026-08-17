@@ -29,6 +29,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       const next = resolveTheme(theme)
       setResolved(next)
       document.documentElement.classList.toggle('dark', next === 'dark')
+      const color = next === 'dark' ? '#1C2433' : '#F7F3EB'
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color)
     }
     apply()
     localStorage.setItem('cruise-theme', theme)

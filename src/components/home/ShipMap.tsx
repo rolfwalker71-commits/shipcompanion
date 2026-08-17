@@ -84,10 +84,10 @@ function MapViewport({ points }: { points: GeoPoint[] }) {
       const bounds = L.latLngBounds(current.map((point) => [point.lat, point.lng]))
       if (!bounds.isValid()) return
       fitting.current = true
-      const topPad = Math.min(window.innerHeight * 0.22, 160)
-      map.fitBounds(bounds.pad(0.18), {
-        paddingTopLeft: L.point(28, topPad),
-        paddingBottomRight: L.point(28, 56),
+      const topPad = Math.min(window.innerHeight * 0.36, 248)
+      map.fitBounds(bounds.pad(0.12), {
+        paddingTopLeft: L.point(20, topPad),
+        paddingBottomRight: L.point(20, 40),
         maxZoom: 8,
         animate: false,
       })

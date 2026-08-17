@@ -11,6 +11,11 @@ import App from './App.tsx'
 
 registerSW({ immediate: true })
 
+const standalone =
+  window.matchMedia('(display-mode: standalone)').matches ||
+  ('standalone' in window.navigator && Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone))
+if (standalone) document.documentElement.classList.add('standalone')
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>

@@ -23,7 +23,7 @@ export function InstallBanner() {
   if (!event) return null
 
   return (
-    <div className="absolute right-4 bottom-6 z-20 sm:right-6">
+    <div className="absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1.5rem,env(safe-area-inset-bottom))] z-20">
       <Button
         variant="secondary"
         className="shadow-lg"

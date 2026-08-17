@@ -152,39 +152,41 @@ app.post('/api/snapshot', async (c) => {
     ? await fetchVesselFinder(body.mmsi, body.imo).catch(() => null)
     : null
 
-  const freshMs = 20 * 60 * 1000
+  const liveMs = 45 * 60 * 1000
   const known = streamFix ?? lastKnownPosition(body.mmsi)
-  const streamFresh = known && now.getTime() - known.ts < freshMs
-  const finderFresh = finderFix && now.getTime() - finderFix.ts < freshMs
-  const liveFix = streamFresh ? known : finderFresh ? finderFix : null
-  const guessed = estimatedPosition(body.stops, now, liveFix ? null : known)
+  const aisPoint = newerStamp(known, finderFix)
+  const aisAge = aisPoint ? now.getTime() - aisPoint.ts : Number.POSITIVE_INFINITY
+  const aisLive = Boolean(aisPoint) && aisAge < liveMs
+  const guessed = estimatedPosition(body.stops, now, null)
   if (!guessed) return c.json({ error: 'no_route' }, 400)
 
   const streamError = aisError()
   const finderError = vesselFinderError(body.mmsi)
   const hasTracker = aisConfigured()
-  const tracking = liveFix
-    ? 'live'
+  const tracking = aisPoint
+    ? aisLive
+      ? 'live'
+      : 'last-known'
     : !hasTracker
       ? 'no-key'
       : finderError || streamError
         ? 'ais-error'
         : 'estimated'
 
-  const position = liveFix
-    ? { lat: liveFix.lat, lng: liveFix.lng, source: 'live' as const }
+  const position = aisPoint
+    ? { lat: aisPoint.lat, lng: aisPoint.lng, source: aisLive ? ('live' as const) : ('approx' as const) }
     : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
-  const motionFix = streamFresh ? known : null
+  const motionFix = known
   const nav = motionFix
     ? navStateFromAis(motionFix.navStatus, motionFix.sog)
-    : liveFix
+    : aisPoint
       ? 'unknown'
       : guessed.atPort
         ? 'moored'
         : 'unknown'
-  const berth = pickBerth(body.stops, liveFix, leg, guessed.atPort, nav)
+  const berth = pickBerth(body.stops, aisPoint, leg, guessed.atPort, nav)
   const atPort = Boolean(berth)
   const shown = berth ?? next
   const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
@@ -205,7 +207,7 @@ app.post('/api/snapshot', async (c) => {
     (await weatherPromise) ??
     (await fetchWeather(position.lat, position.lng, now).catch(() => null))
 
-  const lastStamp = liveFix ?? known ?? finderFix
+  const lastStamp = aisPoint ?? known ?? finderFix
   const departStop = atPort ? shown : (leg.previous ?? null)
   const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
   const track = aisTrail(body.mmsi)
@@ -265,6 +267,12 @@ serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
   console.log(`Cruise Tracker API on http://0.0.0.0:${info.port}`)
   if (!keyReady) console.warn('APP_ACCESS_KEY is empty — login will fail until it is set.')
 })
+
+function newerStamp<T extends { ts: number }>(a: T | null, b: T | null): T | null {
+  if (!a) return b
+  if (!b) return a
+  return a.ts >= b.ts ? a : b
+}
 
 function pickBerth(
   stops: PortStop[],

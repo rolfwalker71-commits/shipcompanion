@@ -72,7 +72,7 @@ export function formatWhen(iso: string, locale: Locale, withUtc = false): string
   return stamp(dated, date, withUtc)
 }
 
-export function formatSeen(iso: string, locale: Locale): string {
+export function formatSeen(iso: string, locale: Locale, withUtc = false): string {
   const date = new Date(iso)
   const local = new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
     timeZone: DISPLAY_TZ,
@@ -82,7 +82,7 @@ export function formatSeen(iso: string, locale: Locale): string {
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(date)
-  return stamp(local, date, true)
+  return stamp(local, date, withUtc)
 }
 
 /** Compact map-pin times in Europe/Berlin, without UTC. */

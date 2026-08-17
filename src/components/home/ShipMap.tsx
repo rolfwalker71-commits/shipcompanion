@@ -55,13 +55,15 @@ function boundsKey(points: GeoPoint[]): string {
   return points.map((point) => `${point.lat.toFixed(3)},${point.lng.toFixed(3)}`).join('|')
 }
 
-function MapViewport({ points }: { points: GeoPoint[] }) {
+function MapViewport({ frame, ship }: { frame: GeoPoint[]; ship: GeoPoint }) {
   const map = useMap()
   const userMoved = useRef(false)
   const fitting = useRef(false)
-  const pointsRef = useRef(points)
-  pointsRef.current = points
-  const key = boundsKey(points)
+  const frameRef = useRef(frame)
+  const shipRef = useRef(ship)
+  frameRef.current = frame
+  shipRef.current = ship
+  const key = boundsKey(frame)
 
   useEffect(() => {
     const markUser = () => {
@@ -78,16 +80,16 @@ function MapViewport({ points }: { points: GeoPoint[] }) {
   useEffect(() => {
     userMoved.current = false
     const fit = () => {
-      const current = pointsRef.current
+      const current = [shipRef.current, ...frameRef.current]
       if (userMoved.current || current.length === 0) return
       map.invalidateSize()
       const bounds = L.latLngBounds(current.map((point) => [point.lat, point.lng]))
       if (!bounds.isValid()) return
       fitting.current = true
-      const topPad = Math.min(window.innerHeight * 0.36, 248)
-      map.fitBounds(bounds.pad(0.12), {
-        paddingTopLeft: L.point(20, topPad),
-        paddingBottomRight: L.point(20, 40),
+      const topPad = Math.min(window.innerHeight * 0.28, 200)
+      map.fitBounds(bounds.pad(0.18), {
+        paddingTopLeft: L.point(24, topPad),
+        paddingBottomRight: L.point(24, 48),
         maxZoom: 8,
         animate: false,
       })
@@ -107,6 +109,14 @@ function MapViewport({ points }: { points: GeoPoint[] }) {
       window.removeEventListener('resize', onResize)
     }
   }, [map, key])
+
+  useEffect(() => {
+    if (userMoved.current || fitting.current) return
+    const bounds = map.getBounds()
+    if (!bounds.contains([ship.lat, ship.lng])) {
+      map.panTo([ship.lat, ship.lng], { animate: true })
+    }
+  }, [map, ship.lat, ship.lng])
 
   return null
 }
@@ -138,7 +148,11 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
     })
   }, [ports])
 
-  const fitPoints = useMemo(() => ports.map((port) => ({ lat: port.lat, lng: port.lng })), [ports])
+  const fitFrame = useMemo(() => {
+    const next = ports.find((port) => port.kind === 'next' || port.kind === 'current')
+    const from = [...ports].reverse().find((port) => port.kind === 'past')
+    return [from, next].filter((port): port is MapPort => Boolean(port))
+  }, [ports])
 
   return (
     <MapContainer
@@ -201,7 +215,7 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
         ),
       )}
       <Marker position={[position.lat, position.lng]} icon={vesselIcon} />
-      <MapViewport points={fitPoints} />
+      <MapViewport frame={fitFrame} ship={position} />
     </MapContainer>
   )
 }

@@ -17,6 +17,11 @@ export function AppHeader({ onOpenSettings }: AppHeaderProps) {
       <div className="flex min-h-14 min-w-0 items-center gap-2 sm:gap-3">
         <Ship className="h-5 w-5 shrink-0 fill-sky-100 text-sky-700 sm:h-6 sm:w-6" aria-hidden />
         <h1 className="truncate text-base font-semibold tracking-tight sm:text-xl">{t('appName')}</h1>
+        {import.meta.env.DEV ? (
+          <span className="shrink-0 rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground">
+            DEV
+          </span>
+        ) : null}
       </div>
       <div className="flex min-h-14 shrink-0 items-center gap-0.5 sm:gap-1">
         <Button

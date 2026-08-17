@@ -41,6 +41,9 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
       ? Date.now() > new Date(snapshot.nextPort.departAt).getTime()
       : false
   const fromBit = !atPort && snapshot.fromPort ? ` ${t('fromPort', { name: snapshot.fromPort })}` : ''
+  const speedKmh = formatSpeedKmh(snapshot.motion?.sogKn)
+  const speedText =
+    speedKmh != null ? t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }) : t('speedUnknown')
   const subtitle = atPort
     ? nav === 'anchored'
       ? t('navAnchored')
@@ -48,8 +51,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         ? t('stillBerth')
         : t('navMoored')
     : nav === 'underway' || nav === 'restricted'
-      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
-      : `${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
+      ? `${t('navUnderway')} · ${speedText}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
+      : `${speedText} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
   const reported = snapshot.voyage?.destination?.trim() || null
   const reportedPlace = reported ? resolveAisDestination(reported, [], locale) ?? reported : null
   const showReported =
@@ -59,7 +62,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
     snapshot.voyage?.eta &&
     Math.abs(new Date(snapshot.voyage.eta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) >
       90 * 60 * 1000
-  const speedKmh = formatSpeedKmh(snapshot.motion?.sogKn)
   const courseDeg =
     snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
   const course =
@@ -94,9 +96,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
               <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
             )}
             <p className="min-w-0 truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
-            <p className="ml-auto shrink-0 text-base font-semibold tabular-nums leading-tight text-primary sm:text-lg">
-              {speedKmh != null ? t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }) : t('speedUnknown')}
-            </p>
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
         </div>

@@ -118,8 +118,8 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
 }
 
 .cruise-div-icon {
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
 }
 
 .ship-marker {
@@ -129,7 +129,7 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
   align-items: center;
   justify-content: center;
   color: var(--foreground);
-  transform-origin: center;
+  transform-origin: 50% 50%;
   filter: drop-shadow(0 0 6px var(--card)) drop-shadow(0 2px 8px color-mix(in oklab, var(--foreground) 35%, transparent));
 }
 

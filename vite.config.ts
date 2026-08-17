@@ -1,10 +1,8 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
-
-const API_PORT = Number(process.env.API_PORT ?? 3345)
 
 const DEV_KILL_SW = `
 self.addEventListener('install', () => self.skipWaiting())
@@ -19,7 +17,12 @@ self.addEventListener('activate', (event) => {
 })
 `
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const apiPort = Number(env.API_PORT ?? 3345)
+  const webPort = Number(env.PORT ?? 3344)
+
+  return {
   plugins: [
     {
       name: 'dev-kill-stale-sw',
@@ -92,17 +95,23 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3344,
+    port: webPort,
     host: true,
+    allowedHosts: true,
+    hmr: {
+      protocol: 'ws',
+      clientPort: webPort,
+    },
     proxy: {
       '/api': {
-        target: `http://127.0.0.1:${API_PORT}`,
+        target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },
     },
   },
   preview: {
-    port: 3344,
+    port: webPort,
     host: true,
   },
+}
 })

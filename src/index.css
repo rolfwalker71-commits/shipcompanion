@@ -96,6 +96,14 @@ body {
   overflow: hidden;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit-fields-wrapper,
 input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
   color: var(--muted-foreground);

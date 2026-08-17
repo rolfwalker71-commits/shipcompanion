@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { useTheme, type Theme } from '@/lib/theme'
 import { useAuth } from '@/lib/auth'
+import { disablePush, enablePush, notificationState, pushSupported } from '@/lib/push'
 
 type SettingsDialogProps = {
   open: boolean
@@ -25,6 +27,8 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
   const { logout } = useAuth()
   const [lang, setLang] = useState(i18n.language.startsWith('de') ? 'de' : 'en')
   const [trackerOn, setTrackerOn] = useState(false)
+  const [push, setPush] = useState<'unsupported' | 'denied' | 'off' | 'on'>('off')
+  const [pushBusy, setPushBusy] = useState(false)
 
   useEffect(() => {
     setLang(i18n.language.startsWith('de') ? 'de' : 'en')
@@ -36,6 +40,7 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { aisConfigured?: boolean } | null) => setTrackerOn(Boolean(data?.aisConfigured)))
       .catch(() => setTrackerOn(false))
+    void notificationState().then(setPush)
   }, [open])
 
   return (
@@ -49,6 +54,41 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
           <p className="text-sm leading-relaxed text-muted-foreground">
             {trackerOn ? t('trackingLive') : t('trackingOff')}
           </p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="push-toggle">{t('pushEnable')}</Label>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {import.meta.env.DEV
+                  ? t('pushHintDev')
+                  : push === 'denied'
+                    ? t('pushDenied')
+                    : push === 'unsupported'
+                      ? t('pushUnsupported')
+                      : t('pushHint')}
+              </p>
+            </div>
+            <Switch
+              id="push-toggle"
+              checked={push === 'on'}
+              disabled={
+                pushBusy ||
+                import.meta.env.DEV ||
+                push === 'denied' ||
+                push === 'unsupported' ||
+                !pushSupported()
+              }
+              onCheckedChange={(checked) => {
+                setPushBusy(true)
+                void (checked ? enablePush() : disablePush().then(() => 'off' as const))
+                  .then((state) => {
+                    if (state === 'on' || state === 'denied' || state === 'unsupported') setPush(state)
+                    else if (state === 'error') setPush('off')
+                    else setPush('off')
+                  })
+                  .finally(() => setPushBusy(false))
+              }}
+            />
+          </div>
           <div className="space-y-2">
             <Label>{t('language')}</Label>
             <Select

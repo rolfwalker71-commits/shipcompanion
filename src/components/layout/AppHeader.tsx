@@ -1,13 +1,14 @@
-import { Moon, Settings, Ship, Sun } from 'lucide-react'
+import { History, Moon, Settings, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/lib/theme'
 
 type AppHeaderProps = {
   onOpenSettings: () => void
+  onOpenTimeline: () => void
 }
 
-export function AppHeader({ onOpenSettings }: AppHeaderProps) {
+export function AppHeader({ onOpenSettings, onOpenTimeline }: AppHeaderProps) {
   const { t, i18n } = useTranslation()
   const { resolved, setTheme } = useTheme()
   const nextLang = i18n.language.startsWith('de') ? 'en' : 'de'
@@ -46,6 +47,9 @@ export function AppHeader({ onOpenSettings }: AppHeaderProps) {
           ) : (
             <Moon className="h-5 w-5 fill-indigo-200 text-indigo-500" />
           )}
+        </Button>
+        <Button variant="ghost" size="icon" aria-label={t('timeline')} onClick={onOpenTimeline}>
+          <History className="h-5 w-5 text-slate-500" />
         </Button>
         <Button variant="ghost" size="icon" aria-label={t('settings')} onClick={onOpenSettings}>
           <Settings className="h-5 w-5 text-slate-500" />

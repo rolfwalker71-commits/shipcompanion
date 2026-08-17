@@ -42,7 +42,11 @@ export default defineConfig(({ mode }) => {
     react(),
     tailwindcss(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
+      injectRegister: false,
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Cruise Tracker',
@@ -67,24 +71,23 @@ export default defineConfig(({ mode }) => {
             purpose: 'maskable',
           },
         ],
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [
+        shortcuts: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
-            handler: 'NetworkOnly',
+            name: 'Jetzt',
+            short_name: 'Jetzt',
+            url: '/',
+            icons: [{ src: 'icon-192.png', sizes: '192x192' }],
           },
           {
-            urlPattern: /^https:\/\/tile\.openstreetmap\.org\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'osm-tiles',
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
-            },
+            name: 'Blick',
+            short_name: 'Blick',
+            url: '/widget',
+            icons: [{ src: 'icon-192.png', sizes: '192x192' }],
           },
         ],
+      },
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
       },
     }),
   ],

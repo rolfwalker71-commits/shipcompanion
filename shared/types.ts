@@ -98,3 +98,15 @@ export type SnapshotResponse = {
   track: GeoPoint[]
   forecast: GeoPoint[]
 }
+
+export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back'
+
+export type TimelineEvent = {
+  id: string
+  kind: TimelineKind
+  at: string
+  titleDe: string
+  titleEn: string
+  detailDe?: string
+  detailEn?: string
+}

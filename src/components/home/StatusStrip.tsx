@@ -1,10 +1,13 @@
+import { useRef, useState } from 'react'
 import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
 import { resolveAisDestination } from '@shared/ais.ts'
 import { formatSeen, formatWhen } from '@shared/time.ts'
 import { useCompactUi } from '@/lib/compact'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 
 type StatusStripProps = {
@@ -18,7 +21,16 @@ type StatusStripProps = {
 export function StatusStrip({ snapshot, error, locale, live, estimated }: StatusStripProps) {
   const { t } = useTranslation()
   const compact = useCompactUi()
+  const scroller = useRef<HTMLDivElement>(null)
+  const [page, setPage] = useState(0)
   const when = (iso: string) => formatWhen(iso, locale, !compact)
+
+  function goTo(next: number) {
+    const el = scroller.current
+    if (!el) return
+    el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+    setPage(next)
+  }
 
   if (!snapshot) {
     return (
@@ -75,115 +87,152 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
 
   return (
     <Card className="pointer-events-auto w-full overflow-visible px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
-      <div className="flex items-center gap-2 sm:gap-3">
-        <Badge
-          className={
-            live
-              ? 'shrink-0 gap-1.5 bg-accent px-2 py-0.5 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
-              : estimated
-                ? 'shrink-0 gap-1.5 bg-primary/10 px-2 py-0.5 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
-                : 'shrink-0 px-2 py-0.5 text-xs sm:px-3 sm:py-1 sm:text-sm'
-          }
-        >
-          {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
-          {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
-        </Badge>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            {stopped ? (
-              <Anchor className="h-4 w-4 shrink-0 fill-teal-100 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
+      <div
+        ref={scroller}
+        className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain"
+        onScroll={(event) => {
+          const el = event.currentTarget
+          if (!el.clientWidth) return
+          setPage(Math.round(el.scrollLeft / el.clientWidth))
+        }}
+      >
+        <section className="w-full shrink-0 snap-start basis-full" aria-label={t('facts')}>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Badge
+              className={
+                live
+                  ? 'shrink-0 gap-1.5 bg-accent px-2 py-0.5 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
+                  : estimated
+                    ? 'shrink-0 gap-1.5 bg-primary/10 px-2 py-0.5 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
+                    : 'shrink-0 px-2 py-0.5 text-xs sm:px-3 sm:py-1 sm:text-sm'
+              }
+            >
+              {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
+              {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
+            </Badge>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                {stopped ? (
+                  <Anchor className="h-4 w-4 shrink-0 fill-teal-100 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
+                ) : (
+                  <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
+                )}
+                <p className="min-w-0 truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap content-start items-center gap-1.5 sm:gap-2">
+            {speedKmh != null ? (
+              <Badge className={chip}>
+                <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+                {t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
+              </Badge>
+            ) : nav === 'underway' || nav === 'restricted' ? (
+              <Badge className={`${chip} text-muted-foreground`}>
+                <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+                {t('speedUnknown')}
+              </Badge>
+            ) : null}
+            {course ? (
+              <Badge className={chip}>
+                <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+                {t('course', { dir: course.dir, deg: course.deg })}
+              </Badge>
+            ) : null}
+            {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
+              <Badge className={chip}>
+                <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
+                {t('distanceLeft', { km: snapshot.distanceKm })}
+              </Badge>
+            ) : null}
+            {hasNext && atPort ? (
+              <Badge className={chip}>
+                <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+                {nextName} • {when(snapshot.nextPort.arriveAt)}
+              </Badge>
+            ) : null}
+            {showReported ? (
+              <Badge className={chip}>{t('reportedDest', { name: reportedPlace ?? '' })}</Badge>
+            ) : null}
+            {showAisEta && snapshot.voyage?.eta ? (
+              <Badge className={`${chip} text-muted-foreground`}>
+                {t('aisEta', { time: when(snapshot.voyage.eta) })}
+              </Badge>
+            ) : null}
+            {zone ? (
+              <Badge className={chip}>{t('seaZone', { name: zone })}</Badge>
+            ) : null}
+            {snapshot.departure ? (
+              <Badge className={`${chip} text-muted-foreground`}>
+                <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
+                {t('departPlanned')} {when(snapshot.departure.planned)}
+              </Badge>
+            ) : null}
+            {snapshot.departure?.actual ? (
+              <Badge className={chip}>
+                <Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />
+                {t('departActual')} {when(snapshot.departure.actual)}
+              </Badge>
+            ) : snapshot.departure ? (
+              <Badge className={`${chip} text-muted-foreground`}>
+                <Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />
+                {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="mt-2 flex items-end justify-between gap-3">
+            {error ? (
+              <p className="min-w-0 text-xs text-muted-foreground" role="status">
+                {t('statusError')}
+              </p>
+            ) : snapshot.seenAt ? (
+              <p className="min-w-0 text-xs text-muted-foreground">
+                {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}
+              </p>
+            ) : snapshot.tracking === 'no-key' ? (
+              <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>
+            ) : snapshot.tracking === 'ais-error' ? (
+              <p className="min-w-0 text-xs text-muted-foreground">{t('approxAisError')}</p>
             ) : (
-              <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
+              <span />
             )}
-            <p className="min-w-0 truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
+            {snapshot.weather ? (
+              <div
+                className="flex shrink-0 flex-col items-center gap-0.5"
+                aria-label={`${snapshot.weather.tempC}°, ${locale === 'de' ? snapshot.weather.labelDe : snapshot.weather.labelEn}`}
+              >
+                <WeatherGlyph code={snapshot.weather.weatherCode} className="h-5 w-5 sm:h-6 sm:w-6" />
+                <p className="text-sm font-bold leading-none sm:text-base">{snapshot.weather.tempC}°</p>
+              </div>
+            ) : null}
           </div>
-          <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
-        </div>
+        </section>
+        <section className="flex w-full shrink-0 snap-start basis-full flex-col justify-center pr-1" aria-label={t('story')}>
+          <p className="text-base leading-relaxed sm:text-lg">{snapshot.narrative || t('narrativeEmpty')}</p>
+        </section>
       </div>
-      <div className="mt-2 flex flex-wrap content-start items-center gap-1.5 sm:gap-2">
-        {speedKmh != null ? (
-          <Badge className={chip}>
-            <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
-          </Badge>
-        ) : nav === 'underway' || nav === 'restricted' ? (
-          <Badge className={`${chip} text-muted-foreground`}>
-            <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {t('speedUnknown')}
-          </Badge>
-        ) : null}
-        {course ? (
-          <Badge className={chip}>
-            <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {t('course', { dir: course.dir, deg: course.deg })}
-          </Badge>
-        ) : null}
-        {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
-          <Badge className={chip}>
-            <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
-            {t('distanceLeft', { km: snapshot.distanceKm })}
-          </Badge>
-        ) : null}
-        {hasNext && atPort ? (
-          <Badge className={chip}>
-            <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {nextName} • {when(snapshot.nextPort.arriveAt)}
-          </Badge>
-        ) : null}
-        {showReported ? (
-          <Badge className={chip}>{t('reportedDest', { name: reportedPlace ?? '' })}</Badge>
-        ) : null}
-        {showAisEta && snapshot.voyage?.eta ? (
-          <Badge className={`${chip} text-muted-foreground`}>
-            {t('aisEta', { time: when(snapshot.voyage.eta) })}
-          </Badge>
-        ) : null}
-        {zone ? (
-          <Badge className={chip}>{t('seaZone', { name: zone })}</Badge>
-        ) : null}
-        {snapshot.departure ? (
-          <Badge className={`${chip} text-muted-foreground`}>
-            <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
-            {t('departPlanned')} {when(snapshot.departure.planned)}
-          </Badge>
-        ) : null}
-        {snapshot.departure?.actual ? (
-          <Badge className={chip}>
-            <Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />
-            {t('departActual')} {when(snapshot.departure.actual)}
-          </Badge>
-        ) : snapshot.departure ? (
-          <Badge className={`${chip} text-muted-foreground`}>
-            <Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />
-            {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
-          </Badge>
-        ) : null}
-      </div>
-      <div className="mt-2 flex items-end justify-between gap-3">
-        {error ? (
-          <p className="min-w-0 text-xs text-muted-foreground" role="status">
-            {t('statusError')}
-          </p>
-        ) : snapshot.seenAt ? (
-          <p className="min-w-0 text-xs text-muted-foreground">
-            {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}
-          </p>
-        ) : snapshot.tracking === 'no-key' ? (
-          <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>
-        ) : snapshot.tracking === 'ais-error' ? (
-          <p className="min-w-0 text-xs text-muted-foreground">{t('approxAisError')}</p>
-        ) : (
-          <span />
-        )}
-        {snapshot.weather ? (
-          <div
-            className="flex shrink-0 flex-col items-center gap-0.5"
-            aria-label={`${snapshot.weather.tempC}°, ${locale === 'de' ? snapshot.weather.labelDe : snapshot.weather.labelEn}`}
-          >
-            <WeatherGlyph code={snapshot.weather.weatherCode} className="h-5 w-5 sm:h-6 sm:w-6" />
-            <p className="text-sm font-bold leading-none sm:text-base">{snapshot.weather.tempC}°</p>
-          </div>
-        ) : null}
+      <div className="flex justify-center" role="tablist" aria-label={t('statusPages')}>
+        <Button
+          variant="ghost"
+          size="icon"
+          role="tab"
+          aria-label={t('facts')}
+          aria-selected={page === 0}
+          onClick={() => goTo(0)}
+        >
+          <span className={cn('size-2 rounded-full', page === 0 ? 'bg-foreground' : 'bg-muted-foreground/40')} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          role="tab"
+          aria-label={t('story')}
+          aria-selected={page === 1}
+          onClick={() => goTo(1)}
+        >
+          <span className={cn('size-2 rounded-full', page === 1 ? 'bg-foreground' : 'bg-muted-foreground/40')} />
+        </Button>
       </div>
     </Card>
   )

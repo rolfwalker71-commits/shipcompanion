@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useMemo } from 'react'
 import type { SnapshotResponse, Trip, PortStop } from '@shared/types.ts'
-import { tripShip } from '@shared/ships.ts'
 import { formatMapWhen } from '@shared/time.ts'
-import { useAuth } from '@/lib/auth'
+import { useSnapshot } from '@/lib/use-snapshot'
 import { ShipMap, type MapPort } from './ShipMap'
 import { StatusStrip } from './StatusStrip'
 
@@ -12,57 +10,7 @@ type HomeViewProps = {
 }
 
 export function HomeView({ trip }: HomeViewProps) {
-  const { i18n } = useTranslation()
-  const { logout } = useAuth()
-  const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null)
-  const [error, setError] = useState(false)
-  const locale = i18n.language.startsWith('de') ? 'de' : 'en'
-  const ship = tripShip(trip)
-
-  const atPort = snapshot?.nextPort.atPort ?? false
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function load() {
-      if (!ship) return
-      const res = await fetch('/api/snapshot', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mmsi: ship.mmsi,
-          imo: ship.imo || undefined,
-          shipName: ship.name,
-          locale,
-          stops: trip.stops,
-        }),
-      })
-      if (res.status === 401) {
-        await logout()
-        return
-      }
-      if (!res.ok) throw new Error('snapshot failed')
-      const data = (await res.json()) as SnapshotResponse
-      if (!cancelled) {
-        setSnapshot(data)
-        setError(false)
-      }
-    }
-
-    void load().catch(() => {
-      if (!cancelled) setError(true)
-    })
-    const timer = window.setInterval(() => {
-      void load().catch(() => {
-        if (!cancelled) setError(true)
-      })
-    }, atPort ? 10_000 : 30_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [atPort, locale, logout, ship, trip.stops])
+  const { snapshot, error, locale, live, estimated } = useSnapshot(trip)
 
   const position = useMemo(() => {
     if (snapshot?.position) return snapshot.position
@@ -75,12 +23,6 @@ export function HomeView({ trip }: HomeViewProps) {
   const forecast = snapshot?.forecast ?? []
 
   const ports = useMemo(() => classifyPorts(trip.stops, locale, snapshot), [locale, snapshot, trip.stops])
-
-  const live = snapshot?.tracking === 'live'
-  const estimated =
-    snapshot?.tracking === 'estimated' ||
-    snapshot?.tracking === 'last-known' ||
-    snapshot?.tracking === 'no-signal'
 
   return (
     <div className="absolute inset-0">

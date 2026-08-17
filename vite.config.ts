@@ -6,8 +6,36 @@ import { fileURLToPath, URL } from 'node:url'
 
 const API_PORT = Number(process.env.API_PORT ?? 3345)
 
+const DEV_KILL_SW = `
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys()
+    await Promise.all(keys.map((key) => caches.delete(key)))
+    await self.registration.unregister()
+    const windows = await self.clients.matchAll({ type: 'window' })
+    for (const client of windows) client.navigate(client.url)
+  })())
+})
+`
+
 export default defineConfig({
   plugins: [
+    {
+      name: 'dev-kill-stale-sw',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const path = req.url?.split('?')[0]
+          if (path !== '/sw.js' && path !== '/dev-sw.js' && !path?.startsWith('/workbox-')) {
+            next()
+            return
+          }
+          res.setHeader('Content-Type', 'text/javascript; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(DEV_KILL_SW)
+        })
+      },
+    },
     react(),
     tailwindcss(),
     VitePWA({

@@ -90,6 +90,23 @@ function readCog(value: unknown): number | null {
   return cog
 }
 
+/** AIS SOG is knots; 102.3 / 1023 means not available. Some feeds send tenths (185 = 18.5 kn). */
+function readSog(value: unknown): number | null {
+  const raw = readCoord(value)
+  if (raw == null || raw < 0 || raw >= 102.2) return null
+  const kn = raw > 80 ? raw / 10 : raw
+  return kn < 80 ? kn : null
+}
+
+function inferredSog(prev: LiveFix | null, next: LiveFix): number | null {
+  if (!prev || next.ts <= prev.ts) return null
+  const hours = (next.ts - prev.ts) / 3_600_000
+  if (hours < 1 / 60 || hours > 0.75) return null
+  const kn = haversineKm(prev, next) / hours / 1.852
+  if (kn < 0 || kn >= 80) return null
+  return Math.round(kn * 10) / 10
+}
+
 function parseAisTime(value: unknown): number {
   if (typeof value !== 'string' || !value.trim()) return Date.now()
   const normalized = value.replace(' +0000 UTC', 'Z').replace(' UTC', 'Z').replace(' ', 'T')
@@ -120,7 +137,7 @@ async function loadCache(): Promise<void> {
             lat: row.lat as number,
             lng: row.lng as number,
             ts: row.ts as number,
-            sog: row.sog ?? null,
+            sog: readSog(row.sog),
             navStatus: row.navStatus ?? null,
             cog: row.cog ?? null,
             heading: row.heading ?? null,
@@ -173,25 +190,29 @@ async function saveCache(): Promise<void> {
 
 function rememberPosition(mmsi: string, fix: LiveFix): void {
   const prev = ensureTrack(mmsi)
+  const statusNav = navStateFromAis(fix.navStatus, null)
+  let sog = fix.sog ?? inferredSog(prev.fix, fix)
+  if (sog == null) sog = isStoppedNav(statusNav) ? 0 : (prev.fix?.sog ?? null)
+  const merged: LiveFix = { ...fix, sog }
   const stops = tripStops.get(mmsi) ?? []
-  const nearby = nearestStop(fix, stops)
-  const nav = navStateFromAis(fix.navStatus, fix.sog)
-  const parked = isStoppedNav(nav) || (nav === 'unknown' && Boolean(nearby) && (fix.sog == null || fix.sog < 1.2))
+  const nearby = nearestStop(merged, stops)
+  const nav = navStateFromAis(merged.navStatus, merged.sog)
+  const parked = isStoppedNav(nav) || (nav === 'unknown' && Boolean(nearby) && (merged.sog == null || merged.sog < 1.2))
   const sailing =
-    isUnderwayNav(nav) || (fix.sog != null && fix.sog >= MOVING_KNOTS) || fix.navStatus === 0 || fix.navStatus === 8
+    isUnderwayNav(nav) || (merged.sog != null && merged.sog >= MOVING_KNOTS) || merged.navStatus === 0 || merged.navStatus === 8
   const departures = { ...prev.actualDepartures }
   let berthId = prev.berthId
   let parkedPoint = prev.parked
 
   if (parked && nearby) {
     berthId = nearby.id
-    parkedPoint = { lat: fix.lat, lng: fix.lng }
+    parkedPoint = { lat: merged.lat, lng: merged.lng }
   } else if (berthId && !departures[berthId]) {
     const from = parkedPoint ?? nearby ?? prev.fix
-    const moved = from ? haversineKm(from, fix) : 0
+    const moved = from ? haversineKm(from, merged) : 0
     const leftHarbor = nearby == null && !parked
     if ((sailing && (moved >= LEFT_PIER_KM || nav === 'underway')) || leftHarbor) {
-      departures[berthId] = fix.ts
+      departures[berthId] = merged.ts
       berthId = nearby?.id ?? null
       parkedPoint = null
     }
@@ -201,8 +222,8 @@ function rememberPosition(mmsi: string, fix: LiveFix): void {
 
   tracks.set(mmsi, {
     ...prev,
-    fix,
-    trail: appendTrail(prev.trail, fix, parked),
+    fix: merged,
+    trail: appendTrail(prev.trail, merged, parked),
     berthId,
     parked: parkedPoint,
     actualDepartures: departures,
@@ -335,7 +356,7 @@ function connect(): void {
         lat,
         lng,
         ts: parseAisTime(payload.MetaData?.time_utc),
-        sog: readCoord(report.Sog ?? report.SOG),
+        sog: readSog(report.Sog ?? report.SOG ?? report.SpeedOverGround ?? report.sog),
         navStatus: readCoord(report.NavigationalStatus),
         cog: readCog(report.Cog ?? report.COG),
         heading: readHeading(report.TrueHeading),

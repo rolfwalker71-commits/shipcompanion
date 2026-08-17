@@ -1,6 +1,7 @@
 import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
+import { resolveAisDestination } from '@shared/ais.ts'
 import { formatSeen, formatWhen } from '@shared/time.ts'
 import { useCompactUi } from '@/lib/compact'
 import { Badge } from '@/components/ui/badge'
@@ -21,7 +22,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
 
   if (!snapshot) {
     return (
-      <Card className="pointer-events-auto w-full max-w-2xl px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
+      <Card className="pointer-events-auto w-full px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
         <p className="text-base font-semibold text-muted-foreground">
           {error ? t('statusError') : t('statusLoading')}
         </p>
@@ -50,29 +51,28 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
       ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
       : `${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
   const reported = snapshot.voyage?.destination?.trim() || null
+  const reportedPlace = reported ? resolveAisDestination(reported, [], locale) ?? reported : null
   const showReported =
-    reported != null &&
-    !samePlace(reported, here) &&
-    !samePlace(reported, nextName)
+    reportedPlace != null && !samePlace(reportedPlace, here) && !samePlace(reportedPlace, nextName)
   const showAisEta =
     !atPort &&
     snapshot.voyage?.eta &&
     Math.abs(new Date(snapshot.voyage.eta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) >
       90 * 60 * 1000
-  const speedKmh =
-    snapshot.motion?.sogKn != null && snapshot.motion.sogKn >= 0.5
-      ? Math.round(snapshot.motion.sogKn * 1.852)
-      : null
+  const speedKmh = formatSpeedKmh(snapshot.motion?.sogKn)
   const courseDeg =
     snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
   const course =
-    courseDeg != null && (speedKmh != null || nav === 'underway' || nav === 'restricted')
+    courseDeg != null && Number.isFinite(courseDeg)
       ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
       : null
   const zone = snapshot.zone?.trim() || null
 
+  const chip =
+    'shrink-0 gap-1.5 overflow-visible whitespace-nowrap px-2.5 py-1 text-xs text-foreground sm:px-3 sm:text-sm'
+
   return (
-    <Card className="pointer-events-auto max-h-[min(42svh,22rem)] w-full min-w-0 max-w-2xl overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-2.5 shadow-xl ring-0 sm:max-h-none sm:px-4 sm:py-3">
+    <Card className="pointer-events-auto w-full overflow-visible px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
       <div className="flex items-center gap-2 sm:gap-3">
         <Badge
           className={
@@ -93,65 +93,69 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
             ) : (
               <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
             )}
-            <p className="truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
+            <p className="min-w-0 truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
+            <p className="ml-auto shrink-0 text-base font-semibold tabular-nums leading-tight text-primary sm:text-lg">
+              {speedKmh != null ? t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }) : t('speedUnknown')}
+            </p>
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
         </div>
       </div>
-      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
+      <div className="mt-2 flex flex-wrap content-start items-center gap-1.5 sm:gap-2">
+        {speedKmh != null ? (
+          <Badge className={chip}>
+            <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+            {t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
+          </Badge>
+        ) : nav === 'underway' || nav === 'restricted' ? (
+          <Badge className={`${chip} text-muted-foreground`}>
+            <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+            {t('speedUnknown')}
+          </Badge>
+        ) : null}
+        {course ? (
+          <Badge className={chip}>
+            <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+            {t('course', { dir: course.dir, deg: course.deg })}
+          </Badge>
+        ) : null}
+        {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
+          <Badge className={chip}>
+            <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
+            {t('distanceLeft', { km: snapshot.distanceKm })}
+          </Badge>
+        ) : null}
         {hasNext && atPort ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
+          <Badge className={chip}>
             <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
             {nextName} • {when(snapshot.nextPort.arriveAt)}
           </Badge>
         ) : null}
         {showReported ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
-            {t('reportedDest', { name: reported ?? '' })}
-          </Badge>
+          <Badge className={chip}>{t('reportedDest', { name: reportedPlace ?? '' })}</Badge>
         ) : null}
         {showAisEta && snapshot.voyage?.eta ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-muted-foreground sm:px-3 sm:py-1 sm:text-sm">
+          <Badge className={`${chip} text-muted-foreground`}>
             {t('aisEta', { time: when(snapshot.voyage.eta) })}
           </Badge>
         ) : null}
-        {speedKmh != null ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
-            <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {t('speedKmh', { speed: speedKmh })}
-          </Badge>
-        ) : null}
-        {course ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
-            <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {t('course', { dir: course.dir, deg: course.deg })}
-          </Badge>
-        ) : null}
         {zone ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
-            {t('seaZone', { name: zone })}
-          </Badge>
-        ) : null}
-        {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
-            <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
-            {t('distanceLeft', { km: snapshot.distanceKm })}
-          </Badge>
+          <Badge className={chip}>{t('seaZone', { name: zone })}</Badge>
         ) : null}
         {snapshot.departure ? (
-          <Badge className="gap-1.5 whitespace-normal px-2 py-0.5 text-xs text-muted-foreground sm:px-3 sm:py-1 sm:text-sm">
-            <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+          <Badge className={`${chip} text-muted-foreground`}>
+            <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
             {t('departPlanned')} {when(snapshot.departure.planned)}
           </Badge>
         ) : null}
         {snapshot.departure?.actual ? (
-          <Badge className="gap-1.5 whitespace-normal px-2 py-0.5 text-xs text-foreground sm:px-3 sm:py-1 sm:text-sm">
-            <Ship className="h-3.5 w-3.5 shrink-0 fill-emerald-100 text-emerald-600" aria-hidden />
+          <Badge className={chip}>
+            <Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />
             {t('departActual')} {when(snapshot.departure.actual)}
           </Badge>
         ) : snapshot.departure ? (
-          <Badge className="gap-1.5 px-2 py-0.5 text-xs text-muted-foreground sm:px-3 sm:py-1 sm:text-sm">
-            <Ship className="h-3.5 w-3.5 shrink-0 fill-orange-100 text-orange-500" aria-hidden />
+          <Badge className={`${chip} text-muted-foreground`}>
+            <Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />
             {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
           </Badge>
         ) : null}
@@ -199,6 +203,21 @@ function WeatherGlyph({ code, className = 'h-4 w-4' }: { code: WeatherInfo['weat
   return <Sun className={`${className} fill-amber-400 text-amber-500`} aria-hidden />
 }
 
+function formatSpeedKmh(sogKn: number | null | undefined): number | null {
+  if (sogKn == null || sogKn < 0 || sogKn >= 102.2) return null
+  const kn = sogKn > 80 ? sogKn / 10 : sogKn
+  if (kn >= 80) return null
+  const kmh = kn * 1.852
+  if (kmh < 10) return Math.round(kmh * 10) / 10
+  return Math.round(kmh)
+}
+
+function formatSpeedLabel(kmh: number, locale: 'de' | 'en'): string {
+  return kmh.toLocaleString(locale === 'de' ? 'de-DE' : 'en-GB', {
+    maximumFractionDigits: kmh < 10 ? 1 : 0,
+  })
+}
+
 function compassDir(degrees: number, locale: 'de' | 'en'): string {
   const dirs =
     locale === 'de' ? ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'] : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
@@ -210,5 +229,9 @@ function samePlace(a: string, b: string): boolean {
   const left = a.trim().toLowerCase()
   const right = b.trim().toLowerCase()
   if (!left || !right) return false
-  return left === right || left.includes(right) || right.includes(left)
+  if (left === right || left.includes(right) || right.includes(left)) return true
+  const tokens = (value: string) => value.split(/[^a-z0-9äöüß]+/i).filter((part) => part.length >= 3)
+  const aTok = tokens(left)
+  const bTok = tokens(right)
+  return aTok.some((part) => bTok.some((other) => other.includes(part) || part.includes(other)))
 }

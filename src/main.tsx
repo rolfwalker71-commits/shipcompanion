@@ -9,7 +9,20 @@ import { ThemeProvider } from './lib/theme.tsx'
 import { AuthProvider } from './lib/auth.tsx'
 import App from './App.tsx'
 
-registerSW({ immediate: true })
+if (import.meta.env.DEV) {
+  void (async () => {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map((reg) => reg.unregister()))
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys()
+      await Promise.all(keys.map((key) => caches.delete(key)))
+    }
+  })()
+} else {
+  registerSW({ immediate: true })
+}
 
 const standalone =
   window.matchMedia('(display-mode: standalone)').matches ||

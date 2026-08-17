@@ -2,6 +2,7 @@ export type Locale = 'de' | 'en'
 
 export type PositionSource = 'live' | 'approx'
 export type TrackingStatus = 'live' | 'estimated' | 'last-known' | 'no-key' | 'no-signal' | 'ais-error'
+export type AisNavState = 'moored' | 'anchored' | 'underway' | 'restricted' | 'aground' | 'unknown'
 
 export type GeoPoint = {
   lat: number
@@ -65,6 +66,16 @@ export type SnapshotResponse = {
   tracking: TrackingStatus
   seenAt: string | null
   zone: string | null
+  motion: {
+    nav: AisNavState
+    sogKn: number | null
+    cog: number | null
+    heading: number | null
+  } | null
+  voyage: {
+    destination: string | null
+    eta: string | null
+  } | null
   nextPort: {
     name: string
     arriveAt: string
@@ -75,10 +86,15 @@ export type SnapshotResponse = {
     departAt: string | null
   }
   departure: {
+    portName: string
     planned: string
     actual: string | null
   } | null
+  fromPort: string | null
+  distanceKm: number | null
   weather: WeatherInfo | null
   narrative: string
   path: GeoPoint[]
+  track: GeoPoint[]
+  forecast: GeoPoint[]
 }

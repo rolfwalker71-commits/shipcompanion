@@ -5,9 +5,10 @@ import { Hono } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import type { SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
-import { estimatedPosition, findLeg, nearPort, routePath } from '../shared/geo.ts'
-import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, actualDeparture } from './ais.ts'
+import type { AisNavState, PortStop, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
+import { estimatedPosition, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
+import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
+import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, actualDeparture, voyageOf, aisTrail } from './ais.ts'
 import { fetchVesselFinder, vesselFinderConfigured, vesselFinderError } from './vesselfinder.ts'
 import {
   COOKIE_NAME,
@@ -141,20 +142,31 @@ app.post('/api/snapshot', async (c) => {
     : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
-  const berth =
-    liveFix && leg.previous && nearPort(liveFix, leg.previous)
-      ? leg.previous
-      : liveFix && leg.atPort && nearPort(liveFix, leg.next)
-        ? leg.next
-        : !liveFix && guessed.atPort
-          ? guessed.next
-          : null
+  const motionFix = streamFresh ? known : null
+  const nav = motionFix
+    ? navStateFromAis(motionFix.navStatus, motionFix.sog)
+    : liveFix
+      ? 'unknown'
+      : guessed.atPort
+        ? 'moored'
+        : 'unknown'
+  const berth = pickBerth(body.stops, liveFix, leg, guessed.atPort, nav)
   const atPort = Boolean(berth)
   const shown = berth ?? next
   const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
   const following = berthIndex >= 0 ? (body.stops[berthIndex + 1] ?? null) : next
   const destination = following ?? shown
   const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
+  const streamVoyage = voyageOf(body.mmsi)
+  const aisDestination = resolveAisDestination(
+    streamVoyage?.destination ?? finderFix?.destination ?? null,
+    body.stops,
+    body.locale,
+  )
+  const voyage =
+    aisDestination || streamVoyage?.eta
+      ? { destination: aisDestination, eta: streamVoyage?.eta ?? null }
+      : null
   const weather =
     (await weatherPromise) ??
     (await fetchWeather(position.lat, position.lng, now).catch(() => null))
@@ -169,18 +181,32 @@ app.post('/api/snapshot', async (c) => {
     departAt: atPort ? shown.departAt : null,
     weather,
     atPort,
+    nav,
     zone: finderFix?.zone ?? null,
-    aisDestination: finderFix?.destination ?? null,
+    aisDestination,
+    aisEta: streamVoyage?.eta ?? null,
   })
 
   const lastStamp = liveFix ?? known ?? finderFix
   const departStop = atPort ? shown : (leg.previous ?? null)
   const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
+  const track = aisTrail(body.mmsi)
+  const lastAis = track[track.length - 1] ?? (known ? { lat: known.lat, lng: known.lng } : null)
+  const forecast = forecastPath(lastAis, position, destination, atPort)
   const payload: SnapshotResponse = {
     position,
     tracking,
     seenAt: lastStamp ? new Date(lastStamp.ts).toISOString() : null,
     zone: finderFix?.zone ?? null,
+    motion: motionFix
+      ? {
+          nav,
+          sogKn: motionFix.sog ?? null,
+          cog: motionFix.cog ?? null,
+          heading: motionFix.heading ?? motionFix.cog ?? null,
+        }
+      : { nav, sogKn: null, cog: null, heading: null },
+    voyage,
     nextPort: {
       name: loc(destination),
       arriveAt: destination.arriveAt,
@@ -193,8 +219,13 @@ app.post('/api/snapshot', async (c) => {
     weather,
     narrative,
     path: routePath(body.stops),
+    track,
+    forecast,
+    fromPort: !atPort && leg.previous ? loc(leg.previous) : null,
+    distanceKm: !atPort ? Math.round(haversineKm(position, destination)) : null,
     departure: departStop
       ? {
+          portName: loc(departStop),
           planned: departStop.departAt,
           actual: actualTs ? new Date(actualTs).toISOString() : null,
         }
@@ -216,3 +247,23 @@ serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
   console.log(`Cruise Tracker API on http://0.0.0.0:${info.port}`)
   if (!keyReady) console.warn('APP_ACCESS_KEY is empty — login will fail until it is set.')
 })
+
+function pickBerth(
+  stops: PortStop[],
+  liveFix: { lat: number; lng: number } | null,
+  leg: { previous: PortStop | null; next: PortStop; atPort: boolean },
+  scheduledAtPort: boolean,
+  nav: AisNavState,
+): PortStop | null {
+  if (!liveFix) return scheduledAtPort ? leg.next : null
+  const nearest =
+    stops
+      .map((stop) => ({ stop, km: haversineKm(liveFix, stop) }))
+      .filter((item) => item.km <= 8)
+      .sort((a, b) => a.km - b.km)[0]?.stop ?? null
+  if (isStoppedNav(nav)) return nearest
+  if (isUnderwayNav(nav)) return null
+  if (leg.previous && nearPort(liveFix, leg.previous)) return leg.previous
+  if (leg.atPort && nearPort(liveFix, leg.next)) return leg.next
+  return nearest
+}

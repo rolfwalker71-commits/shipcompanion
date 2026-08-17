@@ -26,14 +26,24 @@ export function clearTrip(): void {
 }
 
 function migrateTrip(trip: Trip): Trip {
-  if (trip.presetId !== 'west-med') return trip
-  if (trip.stops.some((stop) => stop.id === 'la-spezia')) return trip
-  const preset = presetById('west-med')
+  const preset = presetById(trip.presetId)
   if (!preset) return trip
-  return {
-    ...trip,
-    startDate: preset.stops[0].arriveAt.slice(0, 10),
-    endDate: preset.stops[preset.stops.length - 1].departAt.slice(0, 10),
-    stops: preset.stops,
+
+  if (trip.presetId === 'west-med' && !trip.stops.some((stop) => stop.id === 'la-spezia')) {
+    return {
+      ...trip,
+      startDate: preset.stops[0].arriveAt.slice(0, 10),
+      endDate: preset.stops[preset.stops.length - 1].departAt.slice(0, 10),
+      stops: preset.stops,
+    }
   }
+
+  let changed = false
+  const stops = trip.stops.map((stop) => {
+    const next = preset.stops.find((item) => item.id === stop.id)
+    if (!next || (next.lat === stop.lat && next.lng === stop.lng)) return stop
+    changed = true
+    return { ...stop, lat: next.lat, lng: next.lng }
+  })
+  return changed ? { ...trip, stops } : trip
 }

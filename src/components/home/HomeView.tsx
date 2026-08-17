@@ -69,10 +69,9 @@ export function HomeView({ trip }: HomeViewProps) {
     return stop ? { lat: stop.lat, lng: stop.lng } : { lat: 41.9, lng: 5.2 }
   }, [snapshot?.position, trip.stops])
 
-  const path = useMemo(
-    () => snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng })),
-    [snapshot?.path, trip.stops],
-  )
+  const path = snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
+  const track = snapshot?.track ?? []
+  const forecast = snapshot?.forecast ?? []
 
   const ports = useMemo(() => classifyPorts(trip.stops, locale, snapshot), [locale, snapshot, trip.stops])
 
@@ -85,7 +84,14 @@ export function HomeView({ trip }: HomeViewProps) {
   return (
     <div className="absolute inset-0">
       <div className="absolute inset-0 z-0">
-        <ShipMap position={position} path={path} ports={ports} />
+        <ShipMap
+          position={position}
+          path={path}
+          track={track}
+          forecast={forecast}
+          ports={ports}
+          heading={live ? snapshot?.motion?.heading ?? null : null}
+        />
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex justify-center px-4 pt-2 sm:px-6">

@@ -111,17 +111,18 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
 
 .ship-marker {
   display: flex;
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 44px;
   align-items: center;
   justify-content: center;
   color: var(--foreground);
+  transform-origin: center;
   filter: drop-shadow(0 0 6px var(--card)) drop-shadow(0 2px 8px color-mix(in oklab, var(--foreground) 35%, transparent));
 }
 
 .ship-marker svg {
-  width: 36px;
-  height: 36px;
+  width: 24px;
+  height: 40px;
 }
 
 .port-marker {

@@ -110,6 +110,24 @@ export function routePath(stops: PortStop[]): GeoPoint[] {
   return stops.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
 }
 
+export function forecastPath(
+  lastAis: GeoPoint | null,
+  current: GeoPoint,
+  nextPort: GeoPoint,
+  atPort: boolean,
+): GeoPoint[] {
+  if (atPort) return []
+  const start = lastAis ?? current
+  const points: GeoPoint[] = [{ lat: start.lat, lng: start.lng }]
+  if (haversineKm(start, current) > 0.4) {
+    points.push({ lat: current.lat, lng: current.lng })
+  }
+  if (haversineKm(points[points.length - 1], nextPort) > 1.5) {
+    points.push({ lat: nextPort.lat, lng: nextPort.lng })
+  }
+  return points.length >= 2 ? points : []
+}
+
 export function shiftStopsToStart(stops: PortStop[], startDate: string): PortStop[] {
   if (!stops.length || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return stops
   const first = new Date(stops[0].arriveAt)

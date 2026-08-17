@@ -1,5 +1,6 @@
 import type { ItineraryPreset, PortStop } from './types.ts'
 import { shiftStopsToStart } from './geo.ts'
+import { harborStop } from './harbors.ts'
 
 function iso(daysFromToday: number, hour: number, minute = 0): string {
   const date = new Date()
@@ -14,142 +15,30 @@ function at(local: string): string {
 
 function legendWestMedStops(): PortStop[] {
   return [
-    {
-      id: 'barcelona',
-      name: 'Barcelona',
-      nameDe: 'Barcelona',
-      lat: 41.3548,
-      lng: 2.1686,
-      arriveAt: at('2026-08-16T08:00:00+02:00'),
-      departAt: at('2026-08-16T17:00:00+02:00'),
-    },
-    {
-      id: 'palma',
-      name: 'Palma de Mallorca',
-      nameDe: 'Palma de Mallorca',
-      lat: 39.5696,
-      lng: 2.6502,
-      arriveAt: at('2026-08-17T08:00:00+02:00'),
-      departAt: at('2026-08-17T18:00:00+02:00'),
-    },
-    {
-      id: 'la-spezia',
-      name: 'La Spezia',
-      nameDe: 'La Spezia',
-      lat: 44.1024,
-      lng: 9.8248,
-      arriveAt: at('2026-08-19T06:30:00+02:00'),
-      departAt: at('2026-08-19T20:00:00+02:00'),
-    },
-    {
-      id: 'civitavecchia',
-      name: 'Civitavecchia',
-      nameDe: 'Civitavecchia (Rom)',
-      lat: 42.0938,
-      lng: 11.7968,
-      arriveAt: at('2026-08-20T07:00:00+02:00'),
-      departAt: at('2026-08-20T20:00:00+02:00'),
-    },
-    {
-      id: 'naples',
-      name: 'Naples',
-      nameDe: 'Neapel',
-      lat: 40.8364,
-      lng: 14.2578,
-      arriveAt: at('2026-08-21T07:00:00+02:00'),
-      departAt: at('2026-08-21T19:00:00+02:00'),
-    },
-    {
-      id: 'barcelona-return',
-      name: 'Barcelona',
-      nameDe: 'Barcelona',
-      lat: 41.3548,
-      lng: 2.1686,
-      arriveAt: at('2026-08-23T05:00:00+02:00'),
-      departAt: at('2026-08-23T17:00:00+02:00'),
-    },
+    harborStop('barcelona', 'barcelona', at('2026-08-16T08:00:00+02:00'), at('2026-08-16T17:00:00+02:00')),
+    harborStop('palma', 'palma', at('2026-08-17T08:00:00+02:00'), at('2026-08-17T18:00:00+02:00')),
+    harborStop('la-spezia', 'la-spezia', at('2026-08-19T06:30:00+02:00'), at('2026-08-19T20:00:00+02:00')),
+    harborStop('civitavecchia', 'civitavecchia', at('2026-08-20T07:00:00+02:00'), at('2026-08-20T20:00:00+02:00')),
+    harborStop('naples', 'naples', at('2026-08-21T07:00:00+02:00'), at('2026-08-21T19:00:00+02:00')),
+    harborStop('barcelona', 'barcelona-return', at('2026-08-23T05:00:00+02:00'), at('2026-08-23T17:00:00+02:00')),
   ]
 }
 
 function canariesStops(): PortStop[] {
   return [
-    {
-      id: 'las-palmas',
-      name: 'Las Palmas',
-      nameDe: 'Las Palmas',
-      lat: 28.1235,
-      lng: -15.4363,
-      arriveAt: iso(-3, 8),
-      departAt: iso(-3, 18),
-    },
-    {
-      id: 'tenerife',
-      name: 'Santa Cruz de Tenerife',
-      nameDe: 'Santa Cruz de Tenerife',
-      lat: 28.4636,
-      lng: -16.2518,
-      arriveAt: iso(-1, 9),
-      departAt: iso(-1, 18),
-    },
-    {
-      id: 'funchal',
-      name: 'Funchal',
-      nameDe: 'Funchal',
-      lat: 32.6669,
-      lng: -16.9241,
-      arriveAt: iso(1, 8),
-      departAt: iso(1, 17),
-    },
-    {
-      id: 'las-palmas-return',
-      name: 'Las Palmas',
-      nameDe: 'Las Palmas',
-      lat: 28.1235,
-      lng: -15.4363,
-      arriveAt: iso(3, 8),
-      departAt: iso(3, 18),
-    },
+    harborStop('las-palmas', 'las-palmas', iso(-3, 8), iso(-3, 18)),
+    harborStop('tenerife', 'tenerife', iso(-1, 9), iso(-1, 18)),
+    harborStop('funchal', 'funchal', iso(1, 8), iso(1, 17)),
+    harborStop('las-palmas', 'las-palmas-return', iso(3, 8), iso(3, 18)),
   ]
 }
 
 function caribbeanStops(): PortStop[] {
   return [
-    {
-      id: 'miami',
-      name: 'Miami',
-      nameDe: 'Miami',
-      lat: 25.7743,
-      lng: -80.1937,
-      arriveAt: iso(-4, 7),
-      departAt: iso(-4, 16),
-    },
-    {
-      id: 'nassau',
-      name: 'Nassau',
-      nameDe: 'Nassau',
-      lat: 25.0443,
-      lng: -77.3504,
-      arriveAt: iso(-2, 8),
-      departAt: iso(-2, 17),
-    },
-    {
-      id: 'cozumel',
-      name: 'Cozumel',
-      nameDe: 'Cozumel',
-      lat: 20.5083,
-      lng: -86.9458,
-      arriveAt: iso(1, 8),
-      departAt: iso(1, 17),
-    },
-    {
-      id: 'miami-return',
-      name: 'Miami',
-      nameDe: 'Miami',
-      lat: 25.7743,
-      lng: -80.1937,
-      arriveAt: iso(3, 7),
-      departAt: iso(3, 16),
-    },
+    harborStop('miami', 'miami', iso(-4, 7), iso(-4, 16)),
+    harborStop('nassau', 'nassau', iso(-2, 8), iso(-2, 17)),
+    harborStop('cozumel', 'cozumel', iso(1, 8), iso(1, 17)),
+    harborStop('miami', 'miami-return', iso(3, 7), iso(3, 16)),
   ]
 }
 

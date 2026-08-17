@@ -3,24 +3,46 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { GeoPoint, PortStop } from '../shared/types.ts'
 import { haversineKm } from '../shared/geo.ts'
+import { isStoppedNav, isUnderwayNav, navStateFromAis, parseAisEta } from '../shared/ais.ts'
 
 export type LiveFix = GeoPoint & {
   ts: number
   sog?: number | null
   navStatus?: number | null
+  cog?: number | null
+  heading?: number | null
+}
+
+export type VoyageData = {
+  destination: string | null
+  eta: string | null
+  name: string | null
 }
 
 type Track = {
-  fix: LiveFix
+  fix: LiveFix | null
+  voyage: VoyageData | null
+  trail: GeoPoint[]
   berthId: string | null
   parked: GeoPoint | null
   actualDepartures: Record<string, number>
 }
 
-type CachedTrack = LiveFix & {
+type CachedTrack = {
+  lat?: number
+  lng?: number
+  ts?: number
+  sog?: number | null
+  navStatus?: number | null
+  cog?: number | null
+  heading?: number | null
   berthId?: string | null
   parked?: GeoPoint | null
   actualDepartures?: Record<string, number>
+  destination?: string | null
+  eta?: string | null
+  shipName?: string | null
+  trail?: GeoPoint[]
 }
 
 const WORLD_BOX: [[number, number], [number, number]] = [
@@ -31,6 +53,14 @@ const CACHE_FILE = 'data/ais-cache.json'
 const PORT_KM = 5
 const LEFT_PIER_KM = 0.8
 const MOVING_KNOTS = 2.5
+const MIN_TRAIL_KM = 0.8
+const MAX_TRAIL = 600
+const MESSAGE_TYPES = [
+  'PositionReport',
+  'StandardClassBPositionReport',
+  'ExtendedClassBPositionReport',
+  'ShipStaticData',
+]
 
 const tracks = new Map<string, Track>()
 const tripStops = new Map<string, PortStop[]>()
@@ -48,11 +78,149 @@ function readCoord(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-function isParked(sog: number | null | undefined, navStatus: number | null | undefined): boolean {
-  if (navStatus === 1 || navStatus === 5) return true
-  if (navStatus === 0 || navStatus === 8) return false
-  if (sog != null) return sog < 1.2
-  return false
+function readHeading(value: unknown): number | null {
+  const heading = readCoord(value)
+  if (heading == null || heading < 0 || heading >= 360 || heading === 511) return null
+  return heading
+}
+
+function readCog(value: unknown): number | null {
+  const cog = readCoord(value)
+  if (cog == null || cog < 0 || cog >= 360) return null
+  return cog
+}
+
+function parseAisTime(value: unknown): number {
+  if (typeof value !== 'string' || !value.trim()) return Date.now()
+  const normalized = value.replace(' +0000 UTC', 'Z').replace(' UTC', 'Z').replace(' ', 'T')
+  const ts = Date.parse(normalized)
+  return Number.isFinite(ts) ? ts : Date.now()
+}
+
+function emptyTrack(): Track {
+  return { fix: null, voyage: null, trail: [], berthId: null, parked: null, actualDepartures: {} }
+}
+
+function ensureTrack(mmsi: string): Track {
+  const current = tracks.get(mmsi)
+  if (current) return current
+  const created = emptyTrack()
+  tracks.set(mmsi, created)
+  return created
+}
+
+async function loadCache(): Promise<void> {
+  if (!existsSync(CACHE_FILE)) return
+  try {
+    const raw = JSON.parse(await readFile(CACHE_FILE, 'utf8')) as Record<string, CachedTrack>
+    for (const [mmsi, row] of Object.entries(raw)) {
+      const hasFix = typeof row?.lat === 'number' && typeof row?.lng === 'number' && typeof row?.ts === 'number'
+      const fix = hasFix
+        ? {
+            lat: row.lat as number,
+            lng: row.lng as number,
+            ts: row.ts as number,
+            sog: row.sog ?? null,
+            navStatus: row.navStatus ?? null,
+            cog: row.cog ?? null,
+            heading: row.heading ?? null,
+          }
+        : null
+      const trail = Array.isArray(row.trail)
+        ? row.trail.filter(
+            (point): point is GeoPoint =>
+              typeof point?.lat === 'number' && typeof point?.lng === 'number',
+          )
+        : []
+      tracks.set(mmsi, {
+        fix,
+        voyage:
+          row.destination || row.eta || row.shipName
+            ? {
+                destination: row.destination ?? null,
+                eta: row.eta ?? null,
+                name: row.shipName ?? null,
+              }
+            : null,
+        trail: trail.length ? trail : fix ? [{ lat: fix.lat, lng: fix.lng }] : [],
+        berthId: row.berthId ?? null,
+        parked: row.parked ?? (hasFix ? { lat: row.lat as number, lng: row.lng as number } : null),
+        actualDepartures: row.actualDepartures ?? {},
+      })
+    }
+  } catch {
+    // ignore corrupt cache
+  }
+}
+
+async function saveCache(): Promise<void> {
+  await mkdir('data', { recursive: true })
+  const payload: Record<string, CachedTrack> = {}
+  for (const [mmsi, track] of tracks) {
+    payload[mmsi] = {
+      ...(track.fix ?? {}),
+      berthId: track.berthId,
+      parked: track.parked,
+      actualDepartures: track.actualDepartures,
+      destination: track.voyage?.destination ?? null,
+      eta: track.voyage?.eta ?? null,
+      shipName: track.voyage?.name ?? null,
+      trail: track.trail,
+    }
+  }
+  await writeFile(CACHE_FILE, JSON.stringify(payload), 'utf8')
+}
+
+function rememberPosition(mmsi: string, fix: LiveFix): void {
+  const prev = ensureTrack(mmsi)
+  const stops = tripStops.get(mmsi) ?? []
+  const nearby = nearestStop(fix, stops)
+  const nav = navStateFromAis(fix.navStatus, fix.sog)
+  const parked = isStoppedNav(nav) || (nav === 'unknown' && Boolean(nearby) && (fix.sog == null || fix.sog < 1.2))
+  const sailing =
+    isUnderwayNav(nav) || (fix.sog != null && fix.sog >= MOVING_KNOTS) || fix.navStatus === 0 || fix.navStatus === 8
+  const departures = { ...prev.actualDepartures }
+  let berthId = prev.berthId
+  let parkedPoint = prev.parked
+
+  if (parked && nearby) {
+    berthId = nearby.id
+    parkedPoint = { lat: fix.lat, lng: fix.lng }
+  } else if (berthId && !departures[berthId]) {
+    const from = parkedPoint ?? nearby ?? prev.fix
+    const moved = from ? haversineKm(from, fix) : 0
+    const leftHarbor = nearby == null && !parked
+    if ((sailing && (moved >= LEFT_PIER_KM || nav === 'underway')) || leftHarbor) {
+      departures[berthId] = fix.ts
+      berthId = nearby?.id ?? null
+      parkedPoint = null
+    }
+  } else if (!nearby) {
+    berthId = null
+  }
+
+  tracks.set(mmsi, {
+    ...prev,
+    fix,
+    trail: appendTrail(prev.trail, fix, parked),
+    berthId,
+    parked: parkedPoint,
+    actualDepartures: departures,
+  })
+  void saveCache()
+}
+
+function rememberVoyage(mmsi: string, voyage: VoyageData): void {
+  const prev = ensureTrack(mmsi)
+  tracks.set(mmsi, {
+    ...prev,
+    voyage: {
+      destination: voyage.destination ?? prev.voyage?.destination ?? null,
+      eta: voyage.eta ?? prev.voyage?.eta ?? null,
+      name: voyage.name ?? prev.voyage?.name ?? null,
+    },
+  })
+  void saveCache()
 }
 
 function nearestStop(point: GeoPoint, stops: PortStop[]): PortStop | null {
@@ -68,72 +236,16 @@ function nearestStop(point: GeoPoint, stops: PortStop[]): PortStop | null {
   return best
 }
 
-async function loadCache(): Promise<void> {
-  if (!existsSync(CACHE_FILE)) return
-  try {
-    const raw = JSON.parse(await readFile(CACHE_FILE, 'utf8')) as Record<string, CachedTrack>
-    for (const [mmsi, row] of Object.entries(raw)) {
-      if (typeof row?.lat !== 'number' || typeof row?.lng !== 'number' || typeof row?.ts !== 'number') continue
-      tracks.set(mmsi, {
-        fix: {
-          lat: row.lat,
-          lng: row.lng,
-          ts: row.ts,
-          sog: row.sog ?? null,
-          navStatus: row.navStatus ?? null,
-        },
-        berthId: row.berthId ?? null,
-        parked: row.parked ?? { lat: row.lat, lng: row.lng },
-        actualDepartures: row.actualDepartures ?? {},
-      })
-    }
-  } catch {
-    // ignore corrupt cache
+function appendTrail(trail: GeoPoint[], fix: LiveFix, parked: boolean): GeoPoint[] {
+  const point = { lat: fix.lat, lng: fix.lng }
+  if (trail.length === 0) return [point]
+  const last = trail[trail.length - 1]
+  const moved = haversineKm(last, point)
+  if (parked || moved < MIN_TRAIL_KM) {
+    return [...trail.slice(0, -1), point]
   }
-}
-
-async function saveCache(): Promise<void> {
-  await mkdir('data', { recursive: true })
-  const payload: Record<string, CachedTrack> = {}
-  for (const [mmsi, track] of tracks) {
-    payload[mmsi] = {
-      ...track.fix,
-      berthId: track.berthId,
-      parked: track.parked,
-      actualDepartures: track.actualDepartures,
-    }
-  }
-  await writeFile(CACHE_FILE, JSON.stringify(payload), 'utf8')
-}
-
-function remember(mmsi: string, fix: LiveFix): void {
-  const prev = tracks.get(mmsi)
-  const stops = tripStops.get(mmsi) ?? []
-  const nearby = nearestStop(fix, stops)
-  const parked = isParked(fix.sog, fix.navStatus) || (fix.sog == null && Boolean(nearby))
-  const departures = { ...(prev?.actualDepartures ?? {}) }
-  let berthId = prev?.berthId ?? null
-  let parkedPoint = prev?.parked ?? null
-
-  if (parked && nearby) {
-    berthId = nearby.id
-    parkedPoint = { lat: fix.lat, lng: fix.lng }
-  } else if (berthId && !departures[berthId]) {
-    const from = parkedPoint ?? nearby ?? prev?.fix
-    const moved = from ? haversineKm(from, fix) : 0
-    const sailing = (fix.sog != null && fix.sog >= MOVING_KNOTS) || fix.navStatus === 0 || fix.navStatus === 8
-    const leftHarbor = nearby == null && !parked
-    if ((sailing && moved >= LEFT_PIER_KM) || leftHarbor) {
-      departures[berthId] = fix.ts
-      berthId = nearby?.id ?? null
-      parkedPoint = null
-    }
-  } else if (!nearby) {
-    berthId = null
-  }
-
-  tracks.set(mmsi, { fix, berthId, parked: parkedPoint, actualDepartures: departures })
-  void saveCache()
+  const next = [...trail, point]
+  return next.length > MAX_TRAIL ? next.slice(next.length - MAX_TRAIL) : next
 }
 
 function subscribe(): void {
@@ -145,7 +257,7 @@ function subscribe(): void {
       APIKey: key,
       BoundingBoxes: [WORLD_BOX],
       FiltersShipMMSI: [...watched],
-      FilterMessageTypes: ['PositionReport', 'StandardClassBPositionReport', 'ExtendedClassBPositionReport'],
+      FilterMessageTypes: MESSAGE_TYPES,
     }),
   )
 }
@@ -168,11 +280,19 @@ function connect(): void {
     try {
       const payload = JSON.parse(String(raw)) as {
         error?: string
-        MetaData?: { MMSI?: string | number; latitude?: number; longitude?: number }
+        MessageType?: string
+        MetaData?: {
+          MMSI?: string | number
+          latitude?: number
+          longitude?: number
+          time_utc?: string
+          ShipName?: string
+        }
         Message?: {
           PositionReport?: Record<string, unknown>
           StandardClassBPositionReport?: Record<string, unknown>
           ExtendedClassBPositionReport?: Record<string, unknown>
+          ShipStaticData?: Record<string, unknown>
         }
       }
       if (payload.error) {
@@ -180,20 +300,45 @@ function connect(): void {
         console.warn('AISStream error:', payload.error)
         return
       }
+
+      const staticData = payload.Message?.ShipStaticData
       const report =
         payload.Message?.PositionReport ??
         payload.Message?.StandardClassBPositionReport ??
         payload.Message?.ExtendedClassBPositionReport
-      const mmsi = String(payload.MetaData?.MMSI ?? report?.UserID ?? '')
-      const lat = readCoord(payload.MetaData?.latitude) ?? readCoord(report?.Latitude)
-      const lng = readCoord(payload.MetaData?.longitude) ?? readCoord(report?.Longitude)
-      if (!mmsi || lat == null || lng == null) return
-      remember(mmsi, {
+      const mmsi = String(payload.MetaData?.MMSI ?? staticData?.UserID ?? report?.UserID ?? '')
+      if (!mmsi) return
+
+      if (staticData) {
+        const eta = staticData.Eta as { Month?: number; Day?: number; Hour?: number; Minute?: number } | undefined
+        rememberVoyage(mmsi, {
+          destination: typeof staticData.Destination === 'string' ? staticData.Destination : null,
+          eta: parseAisEta(
+            eta
+              ? {
+                  month: Number(eta.Month ?? 0),
+                  day: Number(eta.Day ?? 0),
+                  hour: Number(eta.Hour ?? 0),
+                  minute: Number(eta.Minute ?? 0),
+                }
+              : null,
+          ),
+          name: typeof staticData.Name === 'string' ? staticData.Name.trim() : (payload.MetaData?.ShipName ?? null),
+        })
+      }
+
+      if (!report) return
+      const lat = readCoord(payload.MetaData?.latitude) ?? readCoord(report.Latitude)
+      const lng = readCoord(payload.MetaData?.longitude) ?? readCoord(report.Longitude)
+      if (lat == null || lng == null) return
+      rememberPosition(mmsi, {
         lat,
         lng,
-        ts: Date.now(),
-        sog: readCoord(report?.Sog ?? report?.SOG),
-        navStatus: readCoord(report?.NavigationalStatus),
+        ts: parseAisTime(payload.MetaData?.time_utc),
+        sog: readCoord(report.Sog ?? report.SOG),
+        navStatus: readCoord(report.NavigationalStatus),
+        cog: readCog(report.Cog ?? report.COG),
+        heading: readHeading(report.TrueHeading),
       })
     } catch {
       // ignore malformed AIS frames
@@ -235,6 +380,14 @@ export function livePosition(mmsi: string, maxAgeMs = 20 * 60 * 1000): LiveFix |
 
 export function lastKnownPosition(mmsi: string): LiveFix | null {
   return tracks.get(mmsi)?.fix ?? null
+}
+
+export function voyageOf(mmsi: string): VoyageData | null {
+  return tracks.get(mmsi)?.voyage ?? null
+}
+
+export function aisTrail(mmsi: string): GeoPoint[] {
+  return tracks.get(mmsi)?.trail ?? []
 }
 
 export function actualDeparture(mmsi: string, stopId: string): number | null {

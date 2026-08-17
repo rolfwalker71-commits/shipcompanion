@@ -1,4 +1,4 @@
-import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Ship, Sun } from 'lucide-react'
+import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
 import { Badge } from '@/components/ui/badge'
@@ -29,19 +29,39 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const here = atPort ? snapshot.nextPort.berthName ?? snapshot.nextPort.name : snapshot.nextPort.name
   const nextName = snapshot.nextPort.name
   const hasNext = !atPort || (snapshot.nextPort.berthName != null && snapshot.nextPort.berthName !== nextName)
+  const nav = snapshot.motion?.nav ?? (atPort ? 'moored' : 'unknown')
+  const stopped = nav === 'moored' || nav === 'anchored' || nav === 'aground'
   const departPast =
     atPort && snapshot.nextPort.departAt
       ? Date.now() > new Date(snapshot.nextPort.departAt).getTime()
       : false
+  const fromBit = !atPort && snapshot.fromPort ? ` ${t('fromPort', { name: snapshot.fromPort })}` : ''
   const subtitle = atPort
-    ? departPast
-      ? t('stillBerth')
-      : t('atHarbor')
-    : `${t('arrival')} ${formatArrival(snapshot.nextPort.arriveAt, locale)}`
+    ? nav === 'anchored'
+      ? t('navAnchored')
+      : departPast
+        ? t('stillBerth')
+        : t('navMoored')
+    : nav === 'underway' || nav === 'restricted'
+      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${formatArrival(snapshot.nextPort.arriveAt, locale)}`
+      : `${t('arrival')} ${formatArrival(snapshot.nextPort.arriveAt, locale)}`
+  const reported = snapshot.voyage?.destination?.trim() || null
+  const showReported =
+    reported != null &&
+    reported.toLowerCase() !== here.toLowerCase() &&
+    reported.toLowerCase() !== nextName.toLowerCase()
+  const showAisEta =
+    !atPort &&
+    snapshot.voyage?.eta &&
+    Math.abs(new Date(snapshot.voyage.eta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) >
+      90 * 60 * 1000
+  const speedKmh =
+    snapshot.motion?.sogKn != null && snapshot.motion.sogKn >= 0.5
+      ? Math.round(snapshot.motion.sogKn * 1.852)
+      : null
 
   return (
     <Card className="pointer-events-auto w-full max-w-2xl px-4 py-3 shadow-xl ring-0">
-      <p className="sr-only">{snapshot.narrative}</p>
       <div className="flex items-center gap-3">
         <Badge
           className={
@@ -57,7 +77,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         </Badge>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            {atPort ? (
+            {stopped ? (
               <Anchor className="h-5 w-5 shrink-0 fill-teal-100 text-teal-600" aria-hidden />
             ) : (
               <Ship className="h-5 w-5 shrink-0 fill-sky-100 text-sky-700" aria-hidden />
@@ -76,6 +96,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           </Badge>
         ) : null}
       </div>
+      <p className="mt-2 text-sm leading-snug text-foreground">{snapshot.narrative}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {hasNext && atPort ? (
           <Badge className="gap-1.5 text-foreground">
@@ -83,7 +104,27 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
             {nextName} • {formatArrival(snapshot.nextPort.arriveAt, locale)}
           </Badge>
         ) : null}
-        {snapshot.departure ? (
+        {showReported ? (
+          <Badge className="gap-1.5 text-foreground">{t('reportedDest', { name: reported ?? '' })}</Badge>
+        ) : null}
+        {showAisEta && snapshot.voyage?.eta ? (
+          <Badge className="gap-1.5 text-muted-foreground">
+            {t('aisEta', { time: formatArrival(snapshot.voyage.eta, locale) })}
+          </Badge>
+        ) : null}
+        {speedKmh != null ? (
+          <Badge className="gap-1.5 text-foreground">
+            <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+            {t('speedKmh', { speed: speedKmh })}
+          </Badge>
+        ) : null}
+        {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
+          <Badge className="gap-1.5 text-foreground">
+            <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
+            {t('distanceLeft', { km: snapshot.distanceKm })}
+          </Badge>
+        ) : null}
+        {atPort && snapshot.departure ? (
           <Badge className="gap-1.5 text-muted-foreground">
             <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
             {t('departPlanned')} {formatArrival(snapshot.departure.planned, locale)}
@@ -92,12 +133,19 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         {snapshot.departure?.actual ? (
           <Badge className="gap-1.5 text-foreground">
             <Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />
-            {t('departActual')} {formatArrival(snapshot.departure.actual, locale)}
+            {atPort
+              ? `${t('departActual')} ${formatArrival(snapshot.departure.actual, locale)}`
+              : `${t('leftPort', { name: snapshot.departure.portName })} ${formatArrival(snapshot.departure.actual, locale)}`}
           </Badge>
         ) : snapshot.departure && atPort ? (
           <Badge className="gap-1.5 text-muted-foreground">
             <Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />
             {t('departActual')} {t('departPending')}
+          </Badge>
+        ) : snapshot.departure && !atPort ? (
+          <Badge className="gap-1.5 text-muted-foreground">
+            <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
+            {t('leftPort', { name: snapshot.departure.portName })} {formatArrival(snapshot.departure.planned, locale)}
           </Badge>
         ) : null}
       </div>
@@ -105,7 +153,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         <p className="mt-2 text-xs text-muted-foreground" role="status">
           {t('statusError')}
         </p>
-      ) : estimated && snapshot.seenAt ? (
+      ) : snapshot.seenAt ? (
         <p className="mt-2 text-xs text-muted-foreground">
           {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale) })}
         </p>

@@ -9,16 +9,19 @@ const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.pn
 const TILE_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
 
-const SHIP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg>`
+const SHIP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 40" fill="currentColor" aria-hidden="true"><path d="M12 1.6c2.3 4.8 6.8 9.6 7.8 17.2v11.8c0 3.5-3.3 6.4-7.8 7.4-4.5-1-7.8-3.9-7.8-7.4V18.8C5.2 11.2 9.7 6.4 12 1.6z"/><circle cx="12" cy="20" r="2.4" fill="var(--card)"/></svg>`
+
+function shipIcon(heading: number | null) {
+  const rotate = heading == null ? '' : ` style="transform: rotate(${Math.round(heading)}deg)"`
+  return L.divIcon({
+    className: 'cruise-div-icon',
+    html: `<div class="ship-marker"${rotate}>${SHIP_SVG}</div>`,
+    iconSize: [28, 44],
+    iconAnchor: [14, 22],
+  })
+}
 
 const PIN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3" fill="var(--card)"/></svg>`
-
-const shipIcon = L.divIcon({
-  className: 'cruise-div-icon',
-  html: `<div class="ship-marker">${SHIP_SVG}</div>`,
-  iconSize: [40, 40],
-  iconAnchor: [20, 20],
-})
 
 export type MapPort = GeoPoint & {
   id: string
@@ -77,25 +80,25 @@ function MapViewport({ points }: { points: GeoPoint[] }) {
 type ShipMapProps = {
   position: GeoPoint
   path: GeoPoint[]
+  track: GeoPoint[]
+  forecast: GeoPoint[]
   ports: MapPort[]
+  heading?: number | null
 }
 
-export function ShipMap({ position, path, ports }: ShipMapProps) {
+export function ShipMap({ position, path, track, forecast, ports, heading = null }: ShipMapProps) {
   const { resolved } = useTheme()
-  const lineColor = resolved === 'dark' ? 'oklch(0.97 0.01 85)' : 'oklch(0.22 0.04 260)'
-  const nextPort = ports.find((port) => port.kind === 'next') ?? ports.find((port) => port.kind === 'current')
+  const planColor = resolved === 'dark' ? 'oklch(0.78 0.02 85)' : 'oklch(0.45 0.03 255)'
+  const aisColor = resolved === 'dark' ? 'oklch(0.78 0.09 195)' : 'oklch(0.52 0.1 195)'
+  const estimateColor = resolved === 'dark' ? 'oklch(0.86 0.08 85)' : 'oklch(0.58 0.12 70)'
 
   const icons = useMemo(() => new Map(ports.map((port) => [port.id, portIcon(port)])), [ports])
+  const vesselIcon = useMemo(() => shipIcon(heading), [heading])
 
-  const points = useMemo(() => [...path, position, ...ports], [path, position, ports])
-
-  const course = useMemo(() => {
-    if (!nextPort) return [] as [number, number][]
-    return [
-      [position.lat, position.lng],
-      [nextPort.lat, nextPort.lng],
-    ] as [number, number][]
-  }, [nextPort, position])
+  const points = useMemo(
+    () => [...path, ...track, ...forecast, position, ...ports],
+    [forecast, path, position, ports, track],
+  )
 
   return (
     <MapContainer
@@ -115,13 +118,26 @@ export function ShipMap({ position, path, ports }: ShipMapProps) {
       {path.length > 1 ? (
         <Polyline
           positions={path.map((point) => [point.lat, point.lng])}
-          pathOptions={{ color: lineColor, weight: 2, opacity: 0.28, dashArray: '2 10' }}
+          pathOptions={{ color: planColor, weight: 2, opacity: 0.28, dashArray: '2 10' }}
         />
       ) : null}
-      {course.length === 2 ? (
+      {track.length > 1 ? (
         <Polyline
-          positions={course}
-          pathOptions={{ color: lineColor, weight: 3, opacity: 0.7, dashArray: '1 10' }}
+          positions={track.map((point) => [point.lat, point.lng])}
+          pathOptions={{ color: aisColor, weight: 4, opacity: 0.92, lineCap: 'round', lineJoin: 'round' }}
+        />
+      ) : null}
+      {forecast.length > 1 ? (
+        <Polyline
+          positions={forecast.map((point) => [point.lat, point.lng])}
+          pathOptions={{
+            color: estimateColor,
+            weight: 3.5,
+            opacity: 0.85,
+            dashArray: '10 12',
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
         />
       ) : null}
       {ports.map((port) =>
@@ -129,7 +145,7 @@ export function ShipMap({ position, path, ports }: ShipMapProps) {
           <Marker key={port.id} position={[port.lat, port.lng]} icon={icons.get(port.id) ?? portIcon(port)} />
         ),
       )}
-      <Marker position={[position.lat, position.lng]} icon={shipIcon} />
+      <Marker position={[position.lat, position.lng]} icon={vesselIcon} />
       <MapViewport points={points} />
     </MapContainer>
   )

@@ -28,7 +28,8 @@ export function LoginScreen() {
     setPending(false)
     if (result === 'invalid') setError(t('loginError'))
     if (result === 'busy') setError(t('loginBusy'))
-    if (result === 'error') setError(t('loginError'))
+    if (result === 'session') setError(t('loginSession'))
+    if (result === 'error') setError(t('statusError'))
   }
 
   return (

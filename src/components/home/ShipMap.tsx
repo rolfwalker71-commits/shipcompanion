@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet'
+import { Circle, MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { GeoPoint } from '@shared/types.ts'
 import { useTheme } from '@/lib/theme'
@@ -8,6 +8,9 @@ const LIGHT_TILES = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.
 const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 const TILE_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+
+/** Coastal AIS is typically usable out to about this distance from a berth. */
+const AIS_RANGE_M = 200_000
 
 const SHIP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 40" fill="currentColor" aria-hidden="true"><path d="M12 1.6c2.3 4.8 6.8 9.6 7.8 17.2v11.8c0 3.5-3.3 6.4-7.8 7.4-4.5-1-7.8-3.9-7.8-7.4V18.8C5.2 11.2 9.7 6.4 12 1.6z"/><circle cx="12" cy="20" r="2.4" fill="var(--card)"/></svg>`
 
@@ -94,6 +97,15 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
 
   const icons = useMemo(() => new Map(ports.map((port) => [port.id, portIcon(port)])), [ports])
   const vesselIcon = useMemo(() => shipIcon(heading), [heading])
+  const rangePorts = useMemo(() => {
+    const seen = new Set<string>()
+    return ports.filter((port) => {
+      const key = `${port.lat.toFixed(3)},${port.lng.toFixed(3)}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [ports])
 
   const points = useMemo(
     () => [...path, ...track, ...forecast, position, ...ports],
@@ -115,6 +127,21 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
         attribution={TILE_ATTR}
         url={resolved === 'dark' ? DARK_TILES : LIGHT_TILES}
       />
+      {rangePorts.map((port) => (
+        <Circle
+          key={`ais-range-${port.id}`}
+          center={[port.lat, port.lng]}
+          radius={AIS_RANGE_M}
+          interactive={false}
+          pathOptions={{
+            color: aisColor,
+            weight: 1,
+            opacity: resolved === 'dark' ? 0.4 : 0.3,
+            fillColor: aisColor,
+            fillOpacity: resolved === 'dark' ? 0.07 : 0.05,
+          }}
+        />
+      ))}
       {path.length > 1 ? (
         <Polyline
           positions={path.map((point) => [point.lat, point.lng])}

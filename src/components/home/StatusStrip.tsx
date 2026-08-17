@@ -1,6 +1,7 @@
-import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
+import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
+import { formatSeen, formatWhen } from '@shared/time.ts'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 
@@ -43,8 +44,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         ? t('stillBerth')
         : t('navMoored')
     : nav === 'underway' || nav === 'restricted'
-      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${formatArrival(snapshot.nextPort.arriveAt, locale)}`
-      : `${t('arrival')} ${formatArrival(snapshot.nextPort.arriveAt, locale)}`
+      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, true)}`
+      : `${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, true)}`
   const reported = snapshot.voyage?.destination?.trim() || null
   const showReported =
     reported != null &&
@@ -59,6 +60,13 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
     snapshot.motion?.sogKn != null && snapshot.motion.sogKn >= 0.5
       ? Math.round(snapshot.motion.sogKn * 1.852)
       : null
+  const courseDeg =
+    snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
+  const course =
+    courseDeg != null && (speedKmh != null || nav === 'underway' || nav === 'restricted')
+      ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
+      : null
+  const zone = snapshot.zone?.trim() || null
 
   return (
     <Card className="pointer-events-auto w-full max-w-2xl px-4 py-3 shadow-xl ring-0">
@@ -87,12 +95,11 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           <p className="mt-0.5 text-sm leading-snug text-muted-foreground">{subtitle}</p>
         </div>
       </div>
-      <p className="mt-2 text-sm leading-snug text-foreground">{snapshot.narrative}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {hasNext && atPort ? (
           <Badge className="gap-1.5 text-foreground">
             <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-            {nextName} • {formatArrival(snapshot.nextPort.arriveAt, locale)}
+            {nextName} • {formatWhen(snapshot.nextPort.arriveAt, locale, true)}
           </Badge>
         ) : null}
         {showReported ? (
@@ -100,7 +107,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         ) : null}
         {showAisEta && snapshot.voyage?.eta ? (
           <Badge className="gap-1.5 text-muted-foreground">
-            {t('aisEta', { time: formatArrival(snapshot.voyage.eta, locale) })}
+            {t('aisEta', { time: formatWhen(snapshot.voyage.eta, locale, true) })}
           </Badge>
         ) : null}
         {speedKmh != null ? (
@@ -109,34 +116,36 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
             {t('speedKmh', { speed: speedKmh })}
           </Badge>
         ) : null}
+        {course ? (
+          <Badge className="gap-1.5 text-foreground">
+            <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+            {t('course', { dir: course.dir, deg: course.deg })}
+          </Badge>
+        ) : null}
+        {zone ? (
+          <Badge className="gap-1.5 text-foreground">{t('seaZone', { name: zone })}</Badge>
+        ) : null}
         {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
           <Badge className="gap-1.5 text-foreground">
             <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
             {t('distanceLeft', { km: snapshot.distanceKm })}
           </Badge>
         ) : null}
-        {atPort && snapshot.departure ? (
-          <Badge className="gap-1.5 text-muted-foreground">
-            <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
-            {t('departPlanned')} {formatArrival(snapshot.departure.planned, locale)}
+        {snapshot.departure ? (
+          <Badge className="gap-1.5 whitespace-normal text-muted-foreground">
+            <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+            {t('departPlanned')} {formatWhen(snapshot.departure.planned, locale, true)}
           </Badge>
         ) : null}
         {snapshot.departure?.actual ? (
-          <Badge className="gap-1.5 text-foreground">
-            <Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />
-            {atPort
-              ? `${t('departActual')} ${formatArrival(snapshot.departure.actual, locale)}`
-              : `${t('leftPort', { name: snapshot.departure.portName })} ${formatArrival(snapshot.departure.actual, locale)}`}
+          <Badge className="gap-1.5 whitespace-normal text-foreground">
+            <Ship className="h-3.5 w-3.5 shrink-0 fill-emerald-100 text-emerald-600" aria-hidden />
+            {t('departActual')} {formatWhen(snapshot.departure.actual, locale, true)}
           </Badge>
-        ) : snapshot.departure && atPort ? (
+        ) : snapshot.departure ? (
           <Badge className="gap-1.5 text-muted-foreground">
-            <Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />
-            {t('departActual')} {t('departPending')}
-          </Badge>
-        ) : snapshot.departure && !atPort ? (
-          <Badge className="gap-1.5 text-muted-foreground">
-            <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
-            {t('leftPort', { name: snapshot.departure.portName })} {formatArrival(snapshot.departure.planned, locale)}
+            <Ship className="h-3.5 w-3.5 shrink-0 fill-orange-100 text-orange-500" aria-hidden />
+            {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
           </Badge>
         ) : null}
       </div>
@@ -157,21 +166,20 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           <span />
         )}
         {snapshot.weather ? (
-          <Badge
-            className="shrink-0 gap-1 text-foreground"
+          <div
+            className="flex shrink-0 flex-col items-center gap-0.5"
             aria-label={`${snapshot.weather.tempC}°, ${locale === 'de' ? snapshot.weather.labelDe : snapshot.weather.labelEn}`}
           >
-            <WeatherGlyph code={snapshot.weather.weatherCode} />
-            {snapshot.weather.tempC}°
-          </Badge>
+            <WeatherGlyph code={snapshot.weather.weatherCode} className="h-6 w-6" />
+            <p className="text-base font-bold leading-none">{snapshot.weather.tempC}°</p>
+          </div>
         ) : null}
       </div>
     </Card>
   )
 }
 
-function WeatherGlyph({ code }: { code: WeatherInfo['weatherCode'] }) {
-  const className = 'h-4 w-4'
+function WeatherGlyph({ code, className = 'h-4 w-4' }: { code: WeatherInfo['weatherCode']; className?: string }) {
   if (code <= 1) return <Sun className={`${className} fill-amber-400 text-amber-500`} aria-hidden />
   if (code <= 3) return <Cloud className={`${className} fill-slate-300 text-slate-500`} aria-hidden />
   if (code <= 48) return <CloudFog className={`${className} text-slate-400`} aria-hidden />
@@ -184,44 +192,9 @@ function WeatherGlyph({ code }: { code: WeatherInfo['weatherCode'] }) {
   return <Sun className={`${className} fill-amber-400 text-amber-500`} aria-hidden />
 }
 
-function formatArrival(iso: string, locale: 'de' | 'en'): string {
-  const date = new Date(iso)
-  const now = new Date()
-  const time = new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-  const tomorrow = new Date(now)
-  tomorrow.setDate(now.getDate() + 1)
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  const isTomorrow =
-    date.getFullYear() === tomorrow.getFullYear() &&
-    date.getMonth() === tomorrow.getMonth() &&
-    date.getDate() === tomorrow.getDate()
-  if (locale === 'de') {
-    if (sameDay) return `heute ${time}`
-    if (isTomorrow) return `morgen ${time}`
-  } else {
-    if (sameDay) return `today ${time}`
-    if (isTomorrow) return `tomorrow ${time}`
-  }
-  return new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
-function formatSeen(iso: string, locale: 'de' | 'en'): string {
-  return new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso))
+function compassDir(degrees: number, locale: 'de' | 'en'): string {
+  const dirs =
+    locale === 'de' ? ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'] : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+  const sector = (((degrees % 360) + 360) % 360) / 45
+  return dirs[Math.round(sector) % 8]
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, Trip, PortStop } from '@shared/types.ts'
 import { tripShip } from '@shared/ships.ts'
+import { formatMapWhen } from '@shared/time.ts'
 import { useAuth } from '@/lib/auth'
 import { ShipMap, type MapPort } from './ShipMap'
 import { StatusStrip } from './StatusStrip'
@@ -136,59 +137,8 @@ function classifyPorts(
       name,
       lat: stop.lat,
       lng: stop.lng,
-      when: formatMapArrival(stop.arriveAt, locale),
+      when: formatMapWhen(stop.arriveAt, locale),
       kind,
     }
   })
-}
-
-function formatArrival(iso: string, locale: 'de' | 'en'): string {
-  const date = new Date(iso)
-  const now = new Date()
-  const time = new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-  const tomorrow = new Date(now)
-  tomorrow.setDate(now.getDate() + 1)
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  const isTomorrow =
-    date.getFullYear() === tomorrow.getFullYear() &&
-    date.getMonth() === tomorrow.getMonth() &&
-    date.getDate() === tomorrow.getDate()
-  if (locale === 'de') {
-    if (sameDay) return `heute ${time}`
-    if (isTomorrow) return `morgen ${time}`
-  } else {
-    if (sameDay) return `today ${time}`
-    if (isTomorrow) return `tomorrow ${time}`
-  }
-  return new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
-function formatMapArrival(iso: string, locale: 'de' | 'en'): string {
-  const relative = formatArrival(iso, locale)
-  if (
-    relative.startsWith('heute') ||
-    relative.startsWith('morgen') ||
-    relative.startsWith('today') ||
-    relative.startsWith('tomorrow')
-  ) {
-    return relative
-  }
-  return new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    weekday: 'short',
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso))
 }

@@ -13,13 +13,14 @@ import { fetchVesselFinder, vesselFinderConfigured, vesselFinderError } from './
 import {
   COOKIE_NAME,
   allowLoginAttempt,
+  clearLoginAttempts,
   createSession,
   destroySession,
   expectedAccessKey,
   keysMatch,
+  recordFailedLogin,
   sessionIsValid,
 } from './auth.ts'
-import { narrate } from './narrate.ts'
 import { fetchWeather } from './weather.ts'
 
 config()
@@ -31,6 +32,31 @@ const app = new Hono()
 
 function clientIp(headers: Headers): string {
   return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local'
+}
+
+function requestIsHttps(request: Request): boolean {
+  const proto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase()
+  if (proto) return proto === 'https'
+  if (request.headers.get('x-forwarded-ssl')?.toLowerCase() === 'on') return true
+  const forwarded = request.headers.get('forwarded')
+  if (forwarded && /proto\s*=\s*https/i.test(forwarded)) return true
+  try {
+    return new URL(request.url).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function sessionCookieOptions(request: Request) {
+  // Same-origin PWA: Lax is enough. SameSite=None+Secure was dropped by Chrome on http://localhost.
+  const secure = process.env.COOKIE_SECURE === 'true' || requestIsHttps(request)
+  return {
+    httpOnly: true,
+    path: '/',
+    sameSite: 'lax' as const,
+    secure,
+    maxAge: 60 * 60 * 24 * 14,
+  }
 }
 
 function requireSession() {
@@ -59,22 +85,19 @@ app.post('/api/auth/login', async (c) => {
   }
   const body = (await c.req.json().catch(() => ({}))) as { key?: string }
   if (!keysMatch(String(body.key ?? ''), expected)) {
+    recordFailedLogin(ip)
     return c.json({ error: 'invalid_key' }, 401)
   }
   const token = createSession()
-  setCookie(c, COOKIE_NAME, token, {
-    httpOnly: true,
-    path: '/',
-    sameSite: 'Lax',
-    secure: process.env.COOKIE_SECURE === 'true',
-    maxAge: 60 * 60 * 24 * 14,
-  })
+  clearLoginAttempts(ip)
+  setCookie(c, COOKIE_NAME, token, sessionCookieOptions(c.req.raw))
   return c.json({ ok: true })
 })
 
 app.post('/api/auth/logout', (c) => {
   destroySession(getCookie(c, COOKIE_NAME))
-  deleteCookie(c, COOKIE_NAME, { path: '/' })
+  const opts = sessionCookieOptions(c.req.raw)
+  deleteCookie(c, COOKIE_NAME, { path: opts.path, secure: opts.secure, sameSite: opts.sameSite })
   return c.json({ ok: true })
 })
 
@@ -170,22 +193,6 @@ app.post('/api/snapshot', async (c) => {
   const weather =
     (await weatherPromise) ??
     (await fetchWeather(position.lat, position.lng, now).catch(() => null))
-  const narrative = await narrate({
-    shipName: body.shipName,
-    locale: body.locale,
-    lat: position.lat,
-    lng: position.lng,
-    currentPort: atPort ? loc(shown) : null,
-    nextPort: loc(destination),
-    arriveAt: destination.arriveAt,
-    departAt: atPort ? shown.departAt : null,
-    weather,
-    atPort,
-    nav,
-    zone: finderFix?.zone ?? null,
-    aisDestination,
-    aisEta: streamVoyage?.eta ?? null,
-  })
 
   const lastStamp = liveFix ?? known ?? finderFix
   const departStop = atPort ? shown : (leg.previous ?? null)
@@ -217,7 +224,7 @@ app.post('/api/snapshot', async (c) => {
       departAt: atPort ? shown.departAt : null,
     },
     weather,
-    narrative,
+    narrative: '',
     path: routePath(body.stops),
     track,
     forecast,

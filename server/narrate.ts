@@ -1,4 +1,5 @@
 import type { AisNavState, Locale, WeatherInfo } from '../shared/types.ts'
+import { formatWhen as formatClock } from '../shared/time.ts'
 
 type NarrateInput = {
   shipName: string
@@ -18,32 +19,7 @@ type NarrateInput = {
 }
 
 function formatWhen(iso: string, locale: Locale): string {
-  const date = new Date(iso)
-  const now = new Date()
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  const tomorrow = new Date(now)
-  tomorrow.setDate(now.getDate() + 1)
-  const isTomorrow =
-    date.getFullYear() === tomorrow.getFullYear() &&
-    date.getMonth() === tomorrow.getMonth() &&
-    date.getDate() === tomorrow.getDate()
-
-  const time = new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-
-  if (locale === 'de') {
-    if (sameDay) return `heute um ${time} Uhr`
-    if (isTomorrow) return `morgen um ${time} Uhr`
-    return `${new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }).format(date)} um ${time} Uhr`
-  }
-  if (sameDay) return `today at ${time}`
-  if (isTomorrow) return `tomorrow at ${time}`
-  return `${new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).format(date)} at ${time}`
+  return formatClock(iso, locale, true)
 }
 
 export function templateNarrative(input: NarrateInput): string {

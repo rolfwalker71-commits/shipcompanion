@@ -33,7 +33,7 @@ Port **3344**. Keys stay in `.env` on the server, never in the browser bundle.
 | `AISSTREAM_API_KEY` | Free live AIS for one ship; last position is cached |
 | `OPENAI_API_KEY` | Spoken status sentence; template if empty |
 | `VESSELFINDER_API_KEY` | Optional paid satellite positions; not needed for family use |
-| `COOKIE_SECURE` | `true` only behind HTTPS |
+| `COOKIE_SECURE` | `true` erzwingt Secure-Cookies. Hinter HTTPS sonst über `X-Forwarded-Proto`, immer `SameSite=Lax`. |
 | `PORT` | HTTP port (default 3344 in production) |
 
 Weather via [Open-Meteo](https://open-meteo.com/) (CC BY 4.0).

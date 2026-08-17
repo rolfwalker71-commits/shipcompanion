@@ -21,21 +21,32 @@ export function expectedAccessKey(): string {
 }
 
 export function keysMatch(provided: string, expected: string): boolean {
-  if (!expected) return false
-  const a = sha256(provided)
-  const b = sha256(expected)
+  const want = expected.trim()
+  if (!want) return false
+  const a = sha256(provided.trim())
+  const b = sha256(want)
   return timingSafeEqual(a, b)
 }
 
 export function allowLoginAttempt(ip: string): boolean {
   const now = Date.now()
   const current = loginAttempts.get(ip)
+  if (!current || now > current.resetAt) return true
+  return current.count < MAX_ATTEMPTS
+}
+
+export function recordFailedLogin(ip: string): void {
+  const now = Date.now()
+  const current = loginAttempts.get(ip)
   if (!current || now > current.resetAt) {
     loginAttempts.set(ip, { count: 1, resetAt: now + ATTEMPT_WINDOW_MS })
-    return true
+    return
   }
   current.count += 1
-  return current.count <= MAX_ATTEMPTS
+}
+
+export function clearLoginAttempts(ip: string): void {
+  loginAttempts.delete(ip)
 }
 
 export function createSession(): string {

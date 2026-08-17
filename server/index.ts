@@ -40,6 +40,17 @@ function requestIsHttps(request: Request): boolean {
   if (request.headers.get('x-forwarded-ssl')?.toLowerCase() === 'on') return true
   const forwarded = request.headers.get('forwarded')
   if (forwarded && /proto\s*=\s*https/i.test(forwarded)) return true
+  const origin = request.headers.get('origin') ?? request.headers.get('referer') ?? ''
+  if (origin.startsWith('https:')) {
+    try {
+      const host = new URL(origin).hostname
+      if (host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && !host.endsWith('.localhost')) {
+        return true
+      }
+    } catch {
+      /* ignore malformed origin */
+    }
+  }
   try {
     return new URL(request.url).protocol === 'https:'
   } catch {
@@ -48,12 +59,12 @@ function requestIsHttps(request: Request): boolean {
 }
 
 function sessionCookieOptions(request: Request) {
-  // Same-origin PWA: Lax is enough. SameSite=None+Secure was dropped by Chrome on http://localhost.
   const secure = process.env.COOKIE_SECURE === 'true' || requestIsHttps(request)
   return {
     httpOnly: true,
     path: '/',
-    sameSite: 'lax' as const,
+    // None+Secure is required for the installed PWA behind HTTPS; Lax is for local HTTP.
+    sameSite: secure ? ('none' as const) : ('lax' as const),
     secure,
     maxAge: 60 * 60 * 24 * 14,
   }

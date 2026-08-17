@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Circle, MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { GeoPoint } from '@shared/types.ts'
@@ -51,14 +51,39 @@ function portIcon(port: MapPort) {
   })
 }
 
+function boundsKey(points: GeoPoint[]): string {
+  return points.map((point) => `${point.lat.toFixed(3)},${point.lng.toFixed(3)}`).join('|')
+}
+
 function MapViewport({ points }: { points: GeoPoint[] }) {
   const map = useMap()
+  const userMoved = useRef(false)
+  const fitting = useRef(false)
+  const pointsRef = useRef(points)
+  pointsRef.current = points
+  const key = boundsKey(points)
 
   useEffect(() => {
+    const markUser = () => {
+      if (!fitting.current) userMoved.current = true
+    }
+    map.on('zoomstart', markUser)
+    map.on('dragstart', markUser)
+    return () => {
+      map.off('zoomstart', markUser)
+      map.off('dragstart', markUser)
+    }
+  }, [map])
+
+  useEffect(() => {
+    userMoved.current = false
     const fit = () => {
+      const current = pointsRef.current
+      if (userMoved.current || current.length === 0) return
       map.invalidateSize()
-      if (points.length === 0) return
-      const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lng]))
+      const bounds = L.latLngBounds(current.map((point) => [point.lat, point.lng]))
+      if (!bounds.isValid()) return
+      fitting.current = true
       const topPad = Math.min(window.innerHeight * 0.22, 160)
       map.fitBounds(bounds.pad(0.18), {
         paddingTopLeft: L.point(28, topPad),
@@ -66,16 +91,22 @@ function MapViewport({ points }: { points: GeoPoint[] }) {
         maxZoom: 8,
         animate: false,
       })
+      map.once('moveend', () => {
+        fitting.current = false
+      })
     }
 
     fit()
     const timer = window.setTimeout(fit, 200)
-    window.addEventListener('resize', fit)
+    const onResize = () => {
+      map.invalidateSize()
+    }
+    window.addEventListener('resize', onResize)
     return () => {
       window.clearTimeout(timer)
-      window.removeEventListener('resize', fit)
+      window.removeEventListener('resize', onResize)
     }
-  }, [map, points])
+  }, [map, key])
 
   return null
 }
@@ -107,10 +138,7 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
     })
   }, [ports])
 
-  const points = useMemo(
-    () => [...path, ...track, ...forecast, position, ...ports],
-    [forecast, path, position, ports, track],
-  )
+  const fitPoints = useMemo(() => ports.map((port) => ({ lat: port.lat, lng: port.lng })), [ports])
 
   return (
     <MapContainer
@@ -173,7 +201,7 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
         ),
       )}
       <Marker position={[position.lat, position.lng]} icon={vesselIcon} />
-      <MapViewport points={points} />
+      <MapViewport points={fitPoints} />
     </MapContainer>
   )
 }

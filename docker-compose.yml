@@ -9,4 +9,7 @@ services:
     environment:
       PORT: 3344
       NODE_ENV: production
+      # Hinter HTTPS-Proxy: in der Server-.env COOKIE_SECURE=true setzen,
+      # falls der Proxy kein X-Forwarded-Proto schickt. Nicht hier hart auf true
+      # setzen — sonst bricht der Login im LAN über HTTP.
     restart: unless-stopped

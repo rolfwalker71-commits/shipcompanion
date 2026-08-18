@@ -1,9 +1,12 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { readJsonSync, writeJson } from './persist.ts'
 
+export type SessionRole = 'viewer' | 'admin'
+
 type Session = {
   token: string
   expiresAt: number
+  role: SessionRole
 }
 
 const sessions = new Map<string, Session>()
@@ -14,7 +17,13 @@ const MAX_ATTEMPTS = 8
 const ATTEMPT_WINDOW_MS = 1000 * 60 * 10
 
 for (const row of readJsonSync<Session[]>('sessions.json', [])) {
-  if (row?.token && row.expiresAt > Date.now()) sessions.set(row.token, row)
+  if (row?.token && row.expiresAt > Date.now()) {
+    sessions.set(row.token, {
+      token: row.token,
+      expiresAt: row.expiresAt,
+      role: row.role === 'admin' ? 'admin' : 'viewer',
+    })
+  }
 }
 
 function persistSessions(): void {
@@ -28,6 +37,19 @@ function sha256(value: string): Buffer {
 
 export function expectedAccessKey(): string {
   return process.env.APP_ACCESS_KEY?.trim() ?? ''
+}
+
+export function expectedSettingsPin(): string {
+  return process.env.SETTINGS_PIN?.trim() ?? ''
+}
+
+export function loginRole(provided: string): SessionRole | null {
+  const family = expectedAccessKey()
+  const settings = expectedSettingsPin()
+  const adminOk = Boolean(settings) && keysMatch(provided, settings)
+  if (adminOk) return 'admin'
+  if (family && keysMatch(provided, family)) return settings ? 'viewer' : 'admin'
+  return null
 }
 
 export function keysMatch(provided: string, expected: string): boolean {
@@ -59,23 +81,27 @@ export function clearLoginAttempts(ip: string): void {
   loginAttempts.delete(ip)
 }
 
-export function createSession(): string {
+export function createSession(role: SessionRole = 'viewer'): string {
   const token = randomBytes(32).toString('hex')
-  sessions.set(token, { token, expiresAt: Date.now() + SESSION_TTL_MS })
+  sessions.set(token, { token, role, expiresAt: Date.now() + SESSION_TTL_MS })
   persistSessions()
   return token
 }
 
 export function sessionIsValid(token: string | undefined): boolean {
-  if (!token) return false
+  return sessionRole(token) != null
+}
+
+export function sessionRole(token: string | undefined): SessionRole | null {
+  if (!token) return null
   const session = sessions.get(token)
-  if (!session) return false
+  if (!session) return null
   if (Date.now() > session.expiresAt) {
     sessions.delete(token)
     persistSessions()
-    return false
+    return null
   }
-  return true
+  return session.role
 }
 
 export function destroySession(token: string | undefined): void {

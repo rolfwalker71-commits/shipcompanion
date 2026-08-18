@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -27,14 +26,13 @@ type SettingsDialogProps = {
 export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialogProps) {
   const { t, i18n } = useTranslation()
   const { theme, setTheme } = useTheme()
-  const { logout } = useAuth()
+  const { logout, isAdmin } = useAuth()
   const [lang, setLang] = useState(i18n.language.startsWith('de') ? 'de' : 'en')
   const [trackerOn, setTrackerOn] = useState(false)
   const [dataDocked, setDataDocked] = useState<DataDockedStatus | null>(null)
   const [intervalHours, setIntervalHours] = useState('3')
-  const [intervalPin, setIntervalPin] = useState('')
   const [intervalBusy, setIntervalBusy] = useState(false)
-  const [intervalMsg, setIntervalMsg] = useState<'ok' | 'bad' | 'missing' | 'busy' | null>(null)
+  const [intervalMsg, setIntervalMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
   const [push, setPush] = useState<'unsupported' | 'denied' | 'off' | 'on'>('off')
   const [pushBusy, setPushBusy] = useState(false)
 
@@ -52,7 +50,6 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
         if (data?.dataDocked?.intervalHours) {
           setIntervalHours(String(data.dataDocked.intervalHours === 1 ? 1 : 3))
         }
-        setIntervalPin('')
         setIntervalMsg(null)
       })
       .catch(() => {
@@ -87,15 +84,11 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: intervalPin, hours: Number(intervalHours) }),
+      body: JSON.stringify({ hours: Number(intervalHours) }),
     })
       .then(async (res) => {
-        if (res.status === 429) {
-          setIntervalMsg('busy')
-          return
-        }
-        if (res.status === 503) {
-          setIntervalMsg('missing')
+        if (res.status === 403) {
+          setIntervalMsg('forbidden')
           return
         }
         if (!res.ok) {
@@ -104,7 +97,6 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
         }
         const data = (await res.json()) as { dataDocked?: DataDockedStatus }
         if (data.dataDocked) setDataDocked(data.dataDocked)
-        setIntervalPin('')
         setIntervalMsg('ok')
       })
       .catch(() => setIntervalMsg('bad'))
@@ -116,63 +108,46 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('settings')}</DialogTitle>
-          <DialogDescription>{t('setupHint')}</DialogDescription>
+          <DialogDescription>{isAdmin ? t('settingsAdminHint') : t('settingsHint')}</DialogDescription>
         </DialogHeader>
         <div className="mt-4 flex flex-col gap-4">
-          <div className="space-y-1">
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              {trackerOn ? t('trackingLive') : t('trackingOff')}
-            </p>
-            <p className="text-sm leading-relaxed text-muted-foreground">{dataDockedLine()}</p>
-          </div>
-          {dataDocked?.configured ? (
-            <div className="space-y-2">
-              <Label htmlFor="docked-interval">{t('dockedInterval')}</Label>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t('dockedIntervalHint')}</p>
-              <Select value={intervalHours} onValueChange={setIntervalHours} disabled={intervalBusy}>
-                <SelectTrigger id="docked-interval" aria-label={t('dockedInterval')}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="3">{t('dockedInterval3')}</SelectItem>
-                  <SelectItem value="1">{t('dockedInterval1')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Label htmlFor="docked-pin">{t('dockedIntervalPin')}</Label>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t('dockedIntervalPinHint')}</p>
-              <Input
-                id="docked-pin"
-                type="password"
-                inputMode="numeric"
-                autoComplete="off"
-                maxLength={12}
-                value={intervalPin}
-                onChange={(event) => setIntervalPin(event.target.value)}
-                aria-label={t('dockedIntervalPin')}
-              />
-              <Button
-                variant="secondary"
-                className="w-full"
-                disabled={intervalBusy || !intervalPin.trim()}
-                onClick={saveInterval}
-              >
-                {t('dockedIntervalSave')}
-              </Button>
-              {intervalMsg === 'ok' ? (
-                <p className="text-sm text-foreground" role="status">
-                  {t('dockedIntervalSaved')}
+          {isAdmin ? (
+            <>
+              <div className="space-y-1">
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {trackerOn ? t('trackingLive') : t('trackingOff')}
                 </p>
+                <p className="text-sm leading-relaxed text-muted-foreground">{dataDockedLine()}</p>
+              </div>
+              {dataDocked?.configured ? (
+                <div className="space-y-2">
+                  <Label htmlFor="docked-interval">{t('dockedInterval')}</Label>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{t('dockedIntervalHint')}</p>
+                  <Select value={intervalHours} onValueChange={setIntervalHours} disabled={intervalBusy}>
+                    <SelectTrigger id="docked-interval" aria-label={t('dockedInterval')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="3">{t('dockedInterval3')}</SelectItem>
+                      <SelectItem value="1">{t('dockedInterval1')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="secondary" className="w-full" disabled={intervalBusy} onClick={saveInterval}>
+                    {t('dockedIntervalSave')}
+                  </Button>
+                  {intervalMsg === 'ok' ? (
+                    <p className="text-sm text-foreground" role="status">
+                      {t('dockedIntervalSaved')}
+                    </p>
+                  ) : null}
+                  {intervalMsg && intervalMsg !== 'ok' ? (
+                    <p className="text-sm text-destructive" role="alert">
+                      {intervalMsg === 'forbidden' ? t('settingsForbidden') : t('tripSaveFailed')}
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
-              {intervalMsg && intervalMsg !== 'ok' ? (
-                <p className="text-sm text-destructive" role="alert">
-                  {intervalMsg === 'missing'
-                    ? t('dockedIntervalPinMissing')
-                    : intervalMsg === 'busy'
-                      ? t('dockedIntervalBusy')
-                      : t('dockedIntervalPinBad')}
-                </p>
-              ) : null}
-            </div>
+            </>
           ) : null}
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 space-y-1">
@@ -241,15 +216,17 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
               </SelectContent>
             </Select>
           </div>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              onOpenChange(false)
-              onEditTrip()
-            }}
-          >
-            {t('editTrip')}
-          </Button>
+          {isAdmin ? (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                onOpenChange(false)
+                onEditTrip()
+              }}
+            >
+              {t('editTrip')}
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             onClick={() => {

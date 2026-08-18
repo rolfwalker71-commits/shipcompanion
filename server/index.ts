@@ -15,9 +15,11 @@ import {
   createSession,
   destroySession,
   expectedAccessKey,
-  keysMatch,
+  expectedSettingsPin,
+  loginRole,
   recordFailedLogin,
   sessionIsValid,
+  sessionRole,
 } from './auth.ts'
 import { getStoredTrip, parseTrip, saveStoredTrip } from './trip-store.ts'
 import { buildSnapshot } from './snapshot.ts'
@@ -73,18 +75,6 @@ function sessionCookieOptions(request: Request) {
   }
 }
 
-function checkSettingsPin(pin: string, ip: string): { error: string; status: 401 | 429 | 503 } | null {
-  const bucket = `pin:${ip}`
-  if (!allowLoginAttempt(bucket)) return { error: 'too_many_attempts', status: 429 }
-  if (!settingsPinConfigured()) return { error: 'pin_not_set', status: 503 }
-  if (!keysMatch(pin, process.env.SETTINGS_PIN ?? '')) {
-    recordFailedLogin(bucket)
-    return { error: 'invalid_pin', status: 401 }
-  }
-  clearLoginAttempts(bucket)
-  return null
-}
-
 function requireSession() {
   return async (
     c: { req: { raw: Request }; json: (data: unknown, status?: number) => Response },
@@ -101,8 +91,7 @@ function requireSession() {
 app.get('/api/health', (c) => c.json({ ok: true, sha: process.env.GIT_SHA ?? 'dev' }))
 
 app.post('/api/auth/login', async (c) => {
-  const expected = expectedAccessKey()
-  if (!expected) {
+  if (!expectedAccessKey() && !expectedSettingsPin()) {
     return c.json({ error: 'server_misconfigured' }, 500)
   }
   const ip = clientIp(c.req.raw.headers)
@@ -110,14 +99,15 @@ app.post('/api/auth/login', async (c) => {
     return c.json({ error: 'too_many_attempts' }, 429)
   }
   const body = (await c.req.json().catch(() => ({}))) as { key?: string }
-  if (!keysMatch(String(body.key ?? ''), expected)) {
+  const role = loginRole(String(body.key ?? ''))
+  if (!role) {
     recordFailedLogin(ip)
     return c.json({ error: 'invalid_key' }, 401)
   }
-  const token = createSession()
+  const token = createSession(role)
   clearLoginAttempts(ip)
   setCookie(c, COOKIE_NAME, token, sessionCookieOptions(c.req.raw))
-  return c.json({ ok: true })
+  return c.json({ ok: true, role })
 })
 
 app.post('/api/auth/logout', (c) => {
@@ -129,8 +119,9 @@ app.post('/api/auth/logout', (c) => {
 
 app.get('/api/auth/session', (c) => {
   const token = getCookie(c, COOKIE_NAME)
-  if (!sessionIsValid(token)) return c.json({ ok: false }, 401)
-  return c.json({ ok: true })
+  const role = sessionRole(token)
+  if (!role) return c.json({ ok: false }, 401)
+  return c.json({ ok: true, role })
 })
 
 app.use('/api/*', async (c, next) => {
@@ -151,9 +142,10 @@ app.get('/api/status', (c) => {
 })
 
 app.post('/api/datadocked/interval', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { pin?: string; hours?: number } | null
-  const pinFail = checkSettingsPin(String(body?.pin ?? ''), clientIp(c.req.raw.headers))
-  if (pinFail) return c.json({ error: pinFail.error }, pinFail.status)
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const body = (await c.req.json().catch(() => null)) as { hours?: number } | null
   const hours = Number(body?.hours)
   if (!setIntervalHours(hours)) return c.json({ error: 'invalid_interval' }, 400)
   return c.json({ dataDocked: dataDockedStatus() })
@@ -164,14 +156,11 @@ app.get('/api/trip', (c) => {
 })
 
 app.put('/api/trip', async (c) => {
-  const body = await c.req.json().catch(() => null)
-  const trip = parseTrip(body)
-  if (!trip) return c.json({ error: 'invalid_trip' }, 400)
-  if (getStoredTrip()) {
-    const pin = typeof body === 'object' && body && 'pin' in body ? String((body as { pin?: unknown }).pin ?? '') : ''
-    const pinFail = checkSettingsPin(pin, clientIp(c.req.raw.headers))
-    if (pinFail) return c.json({ error: pinFail.error }, pinFail.status)
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
   }
+  const trip = parseTrip(await c.req.json().catch(() => null))
+  if (!trip) return c.json({ error: 'invalid_trip' }, 400)
   await saveStoredTrip(trip)
   startTripWatch()
   return c.json({ trip })
@@ -267,8 +256,8 @@ if (isProd && existsSync('dist/index.html')) {
 }
 
 serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
-  const keyReady = expectedAccessKey().length > 0
   console.log(`Cruise Tracker API on http://0.0.0.0:${info.port}`)
-  if (!keyReady) console.warn('APP_ACCESS_KEY is empty — login will fail until it is set.')
+  if (!expectedAccessKey()) console.warn('APP_ACCESS_KEY is empty — family login will fail until it is set.')
+  if (!expectedSettingsPin()) console.warn('SETTINGS_PIN is empty — family login also has admin until it is set.')
   startTripWatch()
 })

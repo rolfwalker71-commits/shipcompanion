@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AppHeader } from '@/components/layout/AppHeader'
 import { InstallBanner } from '@/components/layout/InstallBanner'
 import { HomeView } from '@/components/home/HomeView'
@@ -16,7 +17,8 @@ function isWidgetPath(path: string): boolean {
 }
 
 export default function App() {
-  const { ready, signedIn } = useAuth()
+  const { t } = useTranslation()
+  const { ready, signedIn, isAdmin } = useAuth()
   const [trip, setTrip] = useState<Trip | null>(null)
   const [tripReady, setTripReady] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
@@ -39,12 +41,16 @@ export default function App() {
           setTrip(remote)
         } else {
           const local = loadTrip()
-          if (local) {
-            await pushRemoteTrip(local)
+          if (local && isAdmin) {
+            try {
+              await pushRemoteTrip(local)
+            } catch {
+              /* show local trip until the server accepts it */
+            }
             if (cancelled) return
             setTrip(local)
           } else {
-            setTrip(null)
+            setTrip(local)
           }
         }
       } catch {
@@ -56,11 +62,11 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [signedIn])
+  }, [signedIn, isAdmin])
 
   useEffect(() => {
-    if (signedIn && tripReady && !trip) setSetupOpen(true)
-  }, [signedIn, trip, tripReady])
+    if (signedIn && isAdmin && tripReady && !trip) setSetupOpen(true)
+  }, [signedIn, isAdmin, trip, tripReady])
 
   useEffect(() => {
     const sync = () => setWidget(isWidgetPath(window.location.pathname))
@@ -76,37 +82,45 @@ export default function App() {
     return <LoginScreen />
   }
 
-  const needsSetup = signedIn && !trip
+  const needsSetup = isAdmin && !trip
 
   return (
     <div className="relative h-dvh overflow-hidden bg-muted">
-      {trip ? widget ? <WidgetView trip={trip} /> : <HomeView trip={trip} /> : null}
+      {trip ? (
+        widget ? <WidgetView trip={trip} /> : <HomeView trip={trip} />
+      ) : (
+        <div className="flex h-full items-center justify-center px-6">
+          <p className="text-center text-base text-muted-foreground">{t('tripNotReady')}</p>
+        </div>
+      )}
       <AppHeader
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenTimeline={() => setTimelineOpen(true)}
       />
       {widget ? null : <InstallBanner />}
       <TimelineDialog open={timelineOpen} onOpenChange={setTimelineOpen} />
-      <TripSetupDialog
-        open={setupOpen || needsSetup}
-        trip={trip}
-        onOpenChange={(open) => {
-          if (trip) setSetupOpen(open)
-        }}
-        onSave={async (next, pin) => {
-          try {
-            await pushRemoteTrip(next, pin)
-            setTrip(next)
-          } catch (error) {
-            if (!trip) {
-              saveTrip(next)
+      {isAdmin ? (
+        <TripSetupDialog
+          open={setupOpen || needsSetup}
+          trip={trip}
+          onOpenChange={(open) => {
+            if (trip) setSetupOpen(open)
+          }}
+          onSave={async (next) => {
+            try {
+              await pushRemoteTrip(next)
               setTrip(next)
-              return
+            } catch (error) {
+              if (!trip) {
+                saveTrip(next)
+                setTrip(next)
+                return
+              }
+              throw error
             }
-            throw error
-          }
-        }}
-      />
+          }}
+        />
+      ) : null}
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

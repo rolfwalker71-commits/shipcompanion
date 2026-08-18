@@ -34,13 +34,13 @@ export async function fetchRemoteTrip(): Promise<Trip | null> {
   return migrateTrip(trip)
 }
 
-export async function pushRemoteTrip(trip: Trip, pin?: string): Promise<void> {
+export async function pushRemoteTrip(trip: Trip): Promise<void> {
   const next = migrateTrip(trip)
   const res = await fetch('/api/trip', {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(pin ? { ...next, pin } : next),
+    body: JSON.stringify(next),
   })
   if (!res.ok) {
     const error = new Error('trip save failed') as Error & { status: number }

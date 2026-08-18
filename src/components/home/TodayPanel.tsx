@@ -28,7 +28,7 @@ export function TodayPanel({ snapshot, locale, stops }: TodayPanelProps) {
   const sunset = snapshot.sun ? formatClock(new Date(snapshot.sun.sunset), locale, shipTz) : null
   const greeting = snapshot.narrative?.trim() || t('narrativeEmpty')
   const progress = t('tripDay', {
-    n: tripIndex(stops, snapshot) + 1,
+    n: tripIndex(stops) + 1,
     total: stops.length,
   })
 
@@ -124,7 +124,7 @@ function JourneyBand({
   )
 }
 
-function tripIndex(stops: PortStop[], snapshot: SnapshotResponse): number {
+function tripIndex(stops: PortStop[]): number {
   if (!stops.length) return 0
   const now = Date.now()
   let index = stops.findIndex(

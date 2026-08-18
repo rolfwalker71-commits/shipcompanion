@@ -135,18 +135,25 @@ export function dataDockedStatus(): DataDockedStatus {
   }
 }
 
-/** Spend a credit only when coastal AIS is stale and the interval / budget allows it. */
+function apiHeaders(): { accept: string; 'x-api-key': string } {
+  return { accept: 'application/json', 'x-api-key': apiKey() }
+}
+
+/** Spend a credit when coastal AIS is stale, or when we still have no stored SAT/TER fix. */
 export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean): Promise<DockedFix | null> {
   if (!apiKey() || !mmsi) return store.lastFix
   rollMonth()
   const startup = startupFetchPending
-  if (startup && store.credits == null) {
+  const needFix = store.lastFix == null
+  if ((startup || needFix) && store.credits == null) {
     await refreshCredits().catch(() => {})
   }
-  if (aisFresh) return store.lastFix
+  if (aisFresh && !needFix) return store.lastFix
   if (remainingLocal() <= 0) return store.lastFix
   if (store.credits === 0) return store.lastFix
-  if (!startup && store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) return store.lastFix
+  if (!needFix && !startup && store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) {
+    return store.lastFix
+  }
   if (!startup && store.lastAttemptAt && Date.now() - store.lastAttemptAt < 15 * 60 * 1000) {
     return store.lastFix
   }
@@ -159,13 +166,12 @@ export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean)
 }
 
 async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
-  const key = apiKey()
   const url = new URL(`${BASE}/get-vessel-location`)
   url.searchParams.set('imo_or_mmsi', mmsi)
 
   try {
     const response = await fetch(url, {
-      headers: { 'x-api-key': key },
+      headers: apiHeaders(),
       signal: AbortSignal.timeout(8_000),
     })
     store.lastAttemptAt = Date.now()
@@ -179,16 +185,18 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
       return store.lastFix
     }
 
-    const data = (await response.json()) as { detail?: unknown; error?: string; message?: string }
-    const fix = parseFix(data.detail)
+    const data: unknown = await response.json()
+    const fix = parseFix(data)
     store.lastFetchAt = Date.now()
     store.used += 1
-    store.lastError = fix ? null : parseError(JSON.stringify(data)) || 'no_position'
+    store.lastError = fix ? null : parseMiss(data)
     if (fix) {
       store.lastFix = fix
       console.log(
         `DataDocked ${fix.source} ${new Date(fix.ts).toISOString()} ${fix.lat.toFixed(3)},${fix.lng.toFixed(3)}`,
       )
+    } else {
+      console.warn('Data Docked no position:', store.lastError)
     }
     persist()
     await refreshCredits().catch(() => {})
@@ -207,7 +215,7 @@ async function refreshCredits(): Promise<void> {
   if (!key) return
   try {
     const response = await fetch(`${BASE}/my-credits`, {
-      headers: { 'x-api-key': key },
+      headers: apiHeaders(),
       signal: AbortSignal.timeout(8_000),
     })
     store.lastStatusAt = Date.now()
@@ -215,8 +223,8 @@ async function refreshCredits(): Promise<void> {
       persist()
       return
     }
-    const data = (await response.json()) as { detail?: { credits?: number } }
-    const credits = Number(data.detail?.credits)
+    const data = (await response.json()) as { detail?: { credits?: number }; credits?: number }
+    const credits = Number(data.detail?.credits ?? data.credits)
     if (Number.isFinite(credits)) store.credits = credits
     persist()
   } catch {
@@ -238,17 +246,45 @@ function parseError(text: string): string | null {
   return trimmed.length > 0 && trimmed.length < 240 ? trimmed : null
 }
 
-function parseFix(detail: unknown): DockedFix | null {
-  if (!detail || typeof detail !== 'object') return null
-  const row = detail as Record<string, unknown>
-  const lat = Number(row.latitude)
-  const lng = Number(row.longitude)
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+function parseMiss(data: unknown): string {
+  const row = vesselRow(data)
+  const keys = row ? Object.keys(row).join(',') : typeof data
+  return `no_position (${keys || 'empty'})`
+}
+
+/** Live get-vessel-location returns the vessel at the root; docs/examples wrap it in `detail`. */
+function vesselRow(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const row = data as Record<string, unknown>
+  if (hasCoords(row)) return row
+  if (row.detail && typeof row.detail === 'object' && !Array.isArray(row.detail)) {
+    return row.detail as Record<string, unknown>
+  }
+  return row
+}
+
+function hasCoords(row: Record<string, unknown>): boolean {
+  return readCoord(row.latitude) != null || readCoord(row.lat) != null
+}
+
+function readCoord(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || !value.trim()) return null
+  const n = Number(value.trim().replace(',', '.'))
+  return Number.isFinite(n) ? n : null
+}
+
+function parseFix(data: unknown): DockedFix | null {
+  const row = vesselRow(data)
+  if (!row) return null
+  const lat = readCoord(row.latitude) ?? readCoord(row.lat)
+  const lng = readCoord(row.longitude) ?? readCoord(row.lng) ?? readCoord(row.lon)
+  if (lat == null || lng == null) return null
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null
-  const headingRaw = Number(row.heading)
-  const heading = Number.isFinite(headingRaw) && headingRaw >= 0 && headingRaw < 360 ? headingRaw : null
-  const cogRaw = Number(row.course)
-  const sogRaw = Number(row.speed)
+  const headingRaw = readCoord(row.heading)
+  const heading = headingRaw != null && headingRaw >= 0 && headingRaw < 360 ? headingRaw : null
+  const cogRaw = readCoord(row.course) ?? readCoord(row.cog)
+  const sogRaw = readCoord(row.speed) ?? readCoord(row.sog)
   const etaTs = parseUtc(row.etaUtc)
   return {
     lat,
@@ -257,8 +293,8 @@ function parseFix(detail: unknown): DockedFix | null {
     source: parseSource(row.dataSource),
     destination: typeof row.destination === 'string' && row.destination.trim() ? row.destination.trim() : null,
     eta: etaTs ? new Date(etaTs).toISOString() : null,
-    sog: Number.isFinite(sogRaw) && sogRaw >= 0 && sogRaw < 80 ? sogRaw : null,
-    cog: Number.isFinite(cogRaw) && cogRaw >= 0 && cogRaw < 360 ? cogRaw : null,
+    sog: sogRaw != null && sogRaw >= 0 && sogRaw < 80 ? sogRaw : null,
+    cog: cogRaw != null && cogRaw >= 0 && cogRaw < 360 ? cogRaw : null,
     heading,
     navStatus: navStatusFromLabel(row.navigationalStatus),
   }

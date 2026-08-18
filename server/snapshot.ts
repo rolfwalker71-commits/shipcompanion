@@ -186,6 +186,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
           monthlyLimit: dockedStatus.monthlyLimit,
           seenAt: dockedFix ? new Date(dockedFix.ts).toISOString() : null,
           source: dockedFix?.source ?? null,
+          lastError: dockedStatus.lastError,
         }
       : null,
   }

@@ -103,6 +103,7 @@ export type SnapshotResponse = {
     monthlyLimit: number
     seenAt: string | null
     source: 'TER' | 'SAT' | null
+    lastError: string | null
   } | null
 }
 

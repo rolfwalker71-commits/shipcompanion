@@ -22,7 +22,10 @@ registerRoute(
 )
 
 registerRoute(
-  ({ url }) => url.hostname === 'tile.openstreetmap.org' || url.hostname.endsWith('basemaps.cartocdn.com'),
+  ({ url }) =>
+    url.hostname === 'tile.openstreetmap.org' ||
+    url.hostname.endsWith('basemaps.cartocdn.com') ||
+    url.hostname.endsWith('arcgisonline.com'),
   new NetworkFirst({
     cacheName: 'map-tiles',
     plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 })],

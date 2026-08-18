@@ -55,7 +55,44 @@ function stamp(head: string, date: Date, withUtc: boolean): string {
   return `${head} ${offset} (${clock(date, 'de', 'UTC')} UTC)`
 }
 
-/** Status times: Europe/Berlin, optionally with UTC in parentheses. */
+/** Arrival line: day in words, clock always HH:mm in Europe/Berlin. */
+export function formatArrivalParts(
+  iso: string,
+  locale: Locale,
+): { day: string; time: string; offset: string; homeTime: string | null } {
+  const date = new Date(iso)
+  const time = clock(date, locale, DISPLAY_TZ)
+  const offset = utcOffsetLabel(date)
+  const offsetHours = zoneOffsetHours(date, DISPLAY_TZ)
+  const homeTime = offsetHours === 2 ? null : clock(date, locale, 'Etc/GMT-2')
+  const dayStamp = ymd(date, DISPLAY_TZ)
+  const today = ymd(new Date(), DISPLAY_TZ)
+  if (dayStamp === today) return { day: locale === 'de' ? 'heute' : 'today', time, offset, homeTime }
+  if (dayStamp === addCalendarDays(today, 1)) {
+    return { day: locale === 'de' ? 'morgen' : 'tomorrow', time, offset, homeTime }
+  }
+  const day = new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
+    timeZone: DISPLAY_TZ,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(date)
+  return { day, time, offset, homeTime }
+}
+
+function zoneOffsetHours(date: Date, timeZone: string): number {
+  const raw = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    timeZoneName: 'shortOffset',
+    hour: '2-digit',
+  })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName')?.value
+  const match = raw?.match(/([+-])(\d{1,2})(?::?(\d{2}))?/)
+  if (!match) return 0
+  const sign = match[1] === '-' ? -1 : 1
+  return sign * (Number(match[2]) + (match[3] ? Number(match[3]) / 60 : 0))
+}
 export function formatWhen(iso: string, locale: Locale, withUtc = false): string {
   const date = new Date(iso)
   const relative = relativeHead(date, locale)

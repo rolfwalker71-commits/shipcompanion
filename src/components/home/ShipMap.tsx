@@ -1,13 +1,22 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Circle, MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
+import { Map as MapIcon, Satellite } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { GeoPoint } from '@shared/types.ts'
+import { Button } from '@/components/ui/button'
+import { useMapStyle, type MapStyle } from '@/lib/map-style'
 import { useTheme } from '@/lib/theme'
+import { cn } from '@/lib/utils'
 
-const LIGHT_TILES = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-const TILE_ATTR =
+const VOYAGER_TILES = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+const SATELLITE_TILES =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+const SATELLITE_LABELS =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
+const VOYAGER_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+const SATELLITE_ATTR = 'Tiles &copy; Esri'
 
 /** Coastal AIS is typically usable out to about this distance from a berth. */
 const AIS_RANGE_M = 20_000
@@ -131,11 +140,65 @@ type ShipMapProps = {
   heading?: number | null
 }
 
+function MapStyleToggle({ style, onChange }: { style: MapStyle; onChange: (next: MapStyle) => void }) {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="group"
+      aria-label={t('mapStyle')}
+      className="pointer-events-auto flex overflow-hidden rounded-xl border border-border bg-card/90 shadow-lg backdrop-blur-md"
+    >
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-pressed={style === 'voyager'}
+        aria-label={t('mapVoyager')}
+        className={cn(
+          'min-h-11 gap-1.5 rounded-none px-3',
+          style === 'voyager' && 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground',
+        )}
+        onClick={() => onChange('voyager')}
+      >
+        <MapIcon className="h-4 w-4" aria-hidden />
+        <span className="text-sm">{t('mapVoyager')}</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-pressed={style === 'satellite'}
+        aria-label={t('mapSatellite')}
+        className={cn(
+          'min-h-11 gap-1.5 rounded-none px-3',
+          style === 'satellite' && 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground',
+        )}
+        onClick={() => onChange('satellite')}
+      >
+        <Satellite className="h-4 w-4" aria-hidden />
+        <span className="text-sm">{t('mapSatellite')}</span>
+      </Button>
+    </div>
+  )
+}
+
 export function ShipMap({ position, path, track, gap = [], forecast, ports, heading = null }: ShipMapProps) {
   const { resolved } = useTheme()
-  const planColor = resolved === 'dark' ? 'oklch(0.78 0.02 85)' : 'oklch(0.45 0.03 255)'
-  const aisColor = resolved === 'dark' ? 'oklch(0.78 0.09 195)' : 'oklch(0.52 0.1 195)'
-  const estimateColor = resolved === 'dark' ? 'oklch(0.86 0.08 85)' : 'oklch(0.58 0.12 70)'
+  const { style, setStyle } = useMapStyle()
+  const satellite = style === 'satellite'
+  const planColor = satellite
+    ? 'oklch(0.96 0.02 90)'
+    : resolved === 'dark'
+      ? 'oklch(0.78 0.02 85)'
+      : 'oklch(0.45 0.03 255)'
+  const aisColor = satellite
+    ? 'oklch(0.88 0.12 195)'
+    : resolved === 'dark'
+      ? 'oklch(0.78 0.09 195)'
+      : 'oklch(0.52 0.1 195)'
+  const estimateColor = satellite
+    ? 'oklch(0.92 0.14 85)'
+    : resolved === 'dark'
+      ? 'oklch(0.86 0.08 85)'
+      : 'oklch(0.58 0.12 70)'
 
   const icons = useMemo(() => new Map(ports.map((port) => [port.id, portIcon(port)])), [ports])
   const vesselIcon = useMemo(() => shipIcon(heading), [heading])
@@ -156,20 +219,24 @@ export function ShipMap({ position, path, track, gap = [], forecast, ports, head
   }, [ports])
 
   return (
-    <MapContainer
-      center={[position.lat, position.lng]}
-      zoom={6}
-      className="h-full w-full"
-      style={{ height: '100%', width: '100%' }}
-      scrollWheelZoom
-      zoomControl={false}
-      attributionControl
-    >
+    <div className="relative h-full w-full" data-map-style={style}>
+      <MapContainer
+        center={[position.lat, position.lng]}
+        zoom={6}
+        className="h-full w-full"
+        style={{ height: '100%', width: '100%' }}
+        scrollWheelZoom
+        zoomControl={false}
+        attributionControl
+      >
       <TileLayer
-        key={resolved}
-        attribution={TILE_ATTR}
-        url={resolved === 'dark' ? DARK_TILES : LIGHT_TILES}
+        key={style}
+        attribution={satellite ? SATELLITE_ATTR : VOYAGER_ATTR}
+        url={satellite ? SATELLITE_TILES : VOYAGER_TILES}
+        maxZoom={19}
+        subdomains={satellite ? '1234' : 'abcd'}
       />
+      {satellite ? <TileLayer url={SATELLITE_LABELS} attribution="" maxZoom={19} /> : null}
       {rangePorts.map((port) => (
         <Circle
           key={`ais-range-${port.id}`}
@@ -179,9 +246,9 @@ export function ShipMap({ position, path, track, gap = [], forecast, ports, head
           pathOptions={{
             color: aisColor,
             weight: 1,
-            opacity: resolved === 'dark' ? 0.4 : 0.3,
+            opacity: satellite ? 0.55 : resolved === 'dark' ? 0.4 : 0.3,
             fillColor: aisColor,
-            fillOpacity: resolved === 'dark' ? 0.07 : 0.05,
+            fillOpacity: satellite ? 0.08 : resolved === 'dark' ? 0.07 : 0.05,
           }}
         />
       ))}
@@ -230,6 +297,10 @@ export function ShipMap({ position, path, track, gap = [], forecast, ports, head
       )}
       <Marker position={[position.lat, position.lng]} icon={vesselIcon} />
       <MapViewport frame={fitFrame} ship={position} />
-    </MapContainer>
+      </MapContainer>
+      <div className="pointer-events-none absolute bottom-[max(5.75rem,calc(4.75rem+env(safe-area-inset-bottom)))] left-[max(0.75rem,env(safe-area-inset-left))] z-[1100] sm:bottom-[max(6.25rem,calc(5.25rem+env(safe-area-inset-bottom)))]">
+        <MapStyleToggle style={style} onChange={setStyle} />
+      </div>
+    </div>
   )
 }

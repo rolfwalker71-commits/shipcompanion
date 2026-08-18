@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
+import { ArrowDown, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
 import { resolveAisDestination } from '@shared/ais.ts'
-import { formatSeen, formatWhen } from '@shared/time.ts'
+import { formatArrivalParts, formatSeen, formatWhen } from '@shared/time.ts'
 import { useCompactUi } from '@/lib/compact'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -18,9 +18,11 @@ type StatusStripProps = {
   locale: 'de' | 'en'
   live: boolean
   estimated: boolean
+  shipName?: string
+  lineName?: string
 }
 
-export function StatusStrip({ snapshot, error, locale, live, estimated }: StatusStripProps) {
+export function StatusStrip({ snapshot, error, locale, live, estimated, shipName, lineName }: StatusStripProps) {
   const { t } = useTranslation()
   const compact = useCompactUi()
   const scroller = useRef<HTMLDivElement>(null)
@@ -67,22 +69,22 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const nextName = snapshot.nextPort.name
   const hasNext = !atPort || (snapshot.nextPort.berthName != null && snapshot.nextPort.berthName !== nextName)
   const nav = snapshot.motion?.nav ?? (atPort ? 'moored' : 'unknown')
-  const stopped = nav === 'moored' || nav === 'anchored' || nav === 'aground'
-  const departPast =
-    atPort && snapshot.nextPort.departAt
-      ? Date.now() > new Date(snapshot.nextPort.departAt).getTime()
-      : false
-  const fromBit = !atPort && snapshot.fromPort ? ` ${t('fromPort', { name: snapshot.fromPort })}` : ''
-  const speedKmh = formatSpeedKmh(snapshot.motion?.sogKn)
-  const subtitle = atPort
-    ? nav === 'anchored'
-      ? t('navAnchored')
-      : departPast
-        ? t('stillBerth')
-        : t('navMoored')
-    : nav === 'underway' || nav === 'restricted'
-      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
-      : `${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
+  const navLabel =
+    nav === 'moored'
+      ? t('navMoored')
+      : nav === 'anchored'
+        ? t('navAnchored')
+        : nav === 'aground'
+          ? t('navAground')
+          : nav === 'underway' || nav === 'restricted'
+            ? t('navUnderway')
+            : atPort
+              ? t('navMoored')
+              : null
+  const fromName = !atPort ? snapshot.fromPort : null
+  const pocName = here
+  const arrivalIso = !atPort && snapshot.voyage?.eta ? snapshot.voyage.eta : snapshot.nextPort.arriveAt
+  const arrival = formatArrivalParts(arrivalIso, locale)
   const reported = snapshot.voyage?.destination?.trim() || null
   const reportedPlace = reported ? resolveAisDestination(reported, [], locale) ?? reported : null
   const showReported =
@@ -92,44 +94,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
     !atPort &&
     aisEta != null &&
     Math.abs(new Date(aisEta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) > 90 * 60 * 1000
-  const courseDeg = snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
-  const course =
-    courseDeg != null && Number.isFinite(courseDeg)
-      ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
-      : null
-
-  const metrics: Metric[] = []
-  if (speedKmh != null) {
-    metrics.push({
-      icon: <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
-      label: t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }),
-    })
-  } else if (nav === 'underway' || nav === 'restricted') {
-    metrics.push({
-      icon: <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
-      label: t('speedUnknown'),
-      muted: true,
-    })
-  }
-  if (course) {
-    metrics.push({
-      icon: <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
-      label: t('course', { dir: course.dir, deg: course.deg }),
-    })
-  }
-  if (snapshot.distanceKm != null && snapshot.distanceKm > 2) {
-    metrics.push({
-      icon: <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />,
-      label: t('distanceLeft', { km: snapshot.distanceKm }),
-    })
-  } else if (hasNext && atPort) {
-    metrics.push({
-      icon: <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
-      label: `${nextName} • ${when(snapshot.nextPort.arriveAt)}`,
-    })
-  }
-
-  const seenLine = seenSummary(snapshot, locale, compact, t)
 
   return (
     <Card className="pointer-events-auto w-full overflow-visible px-3 py-2 shadow-xl ring-0 sm:px-4 sm:py-3">
@@ -144,7 +108,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         }}
       >
         <section ref={bindPage(0)} className="w-full shrink-0 snap-start basis-full" aria-label={t('facts')}>
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 items-start gap-2 sm:gap-3">
             <Badge
               className={
                 live
@@ -157,16 +121,42 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
               {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
               {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
             </Badge>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                {stopped ? (
-                  <Anchor className="h-4 w-4 shrink-0 fill-teal-100 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
-                ) : (
-                  <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
-                )}
-                <p className="min-w-0 truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
-              </div>
-              <p className="mt-0.5 truncate text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
+            <div
+              className="min-w-0 flex-1"
+              aria-label={fromName ? `${fromName} → ${pocName}` : pocName}
+            >
+              {fromName ? (
+                <>
+                  <p className="flex min-w-0 items-center gap-1.5 text-base font-semibold leading-tight sm:text-lg">
+                    <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
+                    <span className="min-w-0 truncate">{fromName}</span>
+                  </p>
+                  <ArrowDown
+                    className="my-0.5 ml-0.5 h-4 w-4 text-muted-foreground sm:ml-1 sm:h-5 sm:w-5"
+                    aria-hidden
+                  />
+                </>
+              ) : null}
+              <p className="flex min-w-0 items-baseline gap-3 text-base font-semibold leading-tight sm:text-lg">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <MapPinned className="h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
+                  <span className="min-w-0 truncate">{pocName}</span>
+                </span>
+                {arrival ? (
+                  <span className="ml-auto mr-3 shrink-0 pl-2 text-right text-xs font-medium leading-tight text-muted-foreground sm:mr-5 sm:text-sm">
+                    {t('arrival')} {arrival.day}{' '}
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {arrival.time} {arrival.offset}
+                    </span>
+                    {arrival.homeTime ? (
+                      <>
+                        {' · '}
+                        <span className="font-semibold tabular-nums text-foreground">{arrival.homeTime} UTC+2</span>
+                      </>
+                    ) : null}
+                  </span>
+                ) : null}
+              </p>
             </div>
             {snapshot.weather ? (
               <div
@@ -178,11 +168,11 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
               </div>
             ) : null}
           </div>
-          <MetricRow items={metrics} />
-          <div className="mt-1.5 min-w-0 text-xs leading-snug text-muted-foreground">
-            {error ? <p role="status">{t('statusError')}</p> : null}
-            {seenLine ? <p className="truncate">{seenLine}</p> : null}
-          </div>
+          {error ? (
+            <div className="mt-1.5 min-w-0 text-xs leading-snug text-muted-foreground">
+              <p role="status">{t('statusError')}</p>
+            </div>
+          ) : null}
         </section>
         <section
           ref={bindPage(1)}
@@ -227,6 +217,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
                   time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
                 })}
               </DetailLine>
+            ) : snapshot.dataDocked?.lastError ? (
+              <DetailLine muted>{t('lastSeenDockedError', { error: snapshot.dataDocked.lastError })}</DetailLine>
             ) : snapshot.dataDocked ? (
               <DetailLine muted>{t('lastSeenDockedNone')}</DetailLine>
             ) : null}
@@ -246,19 +238,101 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
           </div>
         </section>
       </div>
-      <div className="flex justify-center" role="tablist" aria-label={t('statusPages')}>
-        {Array.from({ length: PAGE_COUNT }, (_, index) => (
-          <Button
-            key={index}
-            variant="ghost"
-            size="icon"
-            role="tab"
-            aria-label={index === 0 ? t('facts') : index === 1 ? t('story') : t('details')}
-            aria-selected={page === index}
-            onClick={() => goTo(index)}
-          >
-            <span className={cn('size-2 rounded-full', page === index ? 'bg-foreground' : 'bg-muted-foreground/40')} />
-          </Button>
+      <div className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
+        <div className="flex min-w-0 justify-start">
+          {navLabel ? (
+            <Badge className={cn('w-auto max-w-full min-w-0 overflow-hidden px-2 py-0.5 text-[10px] sm:px-3 sm:py-1 sm:text-xs', navBadgeClass(nav))}>
+              <span className="truncate">{navLabel}</span>
+            </Badge>
+          ) : null}
+        </div>
+        <div className="flex justify-center" role="tablist" aria-label={t('statusPages')}>
+          {Array.from({ length: PAGE_COUNT }, (_, index) => (
+            <Button
+              key={index}
+              variant="ghost"
+              size="icon"
+              role="tab"
+              aria-label={index === 0 ? t('facts') : index === 1 ? t('story') : t('details')}
+              aria-selected={page === index}
+              onClick={() => goTo(index)}
+            >
+              <span className={cn('size-2 rounded-full', page === index ? 'bg-foreground' : 'bg-muted-foreground/40')} />
+            </Button>
+          ))}
+        </div>
+        <div
+          className="min-w-0 text-right leading-tight"
+          title={[shipName, lineName].filter(Boolean).join(' · ')}
+          aria-label={[shipName, lineName].filter(Boolean).join(', ')}
+        >
+          {shipName ? (
+            <p className="truncate text-[10px] font-semibold text-foreground sm:text-xs">{shipName}</p>
+          ) : null}
+          {lineName ? (
+            <p className="truncate text-[10px] text-muted-foreground sm:text-xs">{lineName}</p>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+export function TelemetryBar({ snapshot, locale }: { snapshot: SnapshotResponse | null; locale: 'de' | 'en' }) {
+  const { t } = useTranslation()
+  if (!snapshot) return null
+
+  const atPort = snapshot.nextPort.atPort
+  const nav = snapshot.motion?.nav ?? (atPort ? 'moored' : 'unknown')
+  const speedKmh = formatSpeedKmh(snapshot.motion?.sogKn)
+  const courseDeg = snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
+  const course =
+    courseDeg != null && Number.isFinite(courseDeg)
+      ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
+      : null
+
+  const items: Metric[] = []
+  if (speedKmh != null) {
+    items.push({
+      icon: <Gauge className="h-4 w-4 text-sky-600" aria-hidden />,
+      label: t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }),
+    })
+  } else if (nav === 'underway' || nav === 'restricted') {
+    items.push({
+      icon: <Gauge className="h-4 w-4 text-sky-600" aria-hidden />,
+      label: t('speedUnknown'),
+      muted: true,
+    })
+  }
+  if (course) {
+    items.push({
+      icon: <Compass className="h-4 w-4 text-sky-600" aria-hidden />,
+      label: t('course', { dir: course.dir, deg: course.deg }),
+    })
+  }
+  if (snapshot.distanceKm != null && snapshot.distanceKm > 2) {
+    items.push({
+      icon: <MapPinned className="h-4 w-4 text-teal-600" aria-hidden />,
+      label: t('distanceLeft', { km: snapshot.distanceKm }),
+    })
+  }
+  if (!items.length) return null
+
+  return (
+    <Card className="pointer-events-auto w-full px-2 py-2 shadow-xl ring-0 sm:px-3 sm:py-2.5" aria-label={t('telemetry')}>
+      <div className="flex divide-x divide-border/60">
+        {items.map((item) => (
+          <div key={item.label} className="flex min-w-0 flex-1 items-center justify-center gap-2 px-3 py-2.5">
+            <span className="shrink-0">{item.icon}</span>
+            <span
+              className={cn(
+                'truncate text-sm font-medium sm:text-base',
+                item.muted ? 'text-muted-foreground' : 'text-foreground',
+              )}
+            >
+              {item.label}
+            </span>
+          </div>
         ))}
       </div>
     </Card>
@@ -271,25 +345,17 @@ type Metric = {
   muted?: boolean
 }
 
-function MetricRow({ items }: { items: Metric[] }) {
-  if (!items.length) return null
-  return (
-    <div className="mt-2 flex divide-x divide-border/60 rounded-xl bg-muted/70">
-      {items.map((item) => (
-        <div key={item.label} className="flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-1.5">
-          <span className="shrink-0">{item.icon}</span>
-          <span
-            className={cn(
-              'truncate text-xs font-medium sm:text-sm',
-              item.muted ? 'text-muted-foreground' : 'text-foreground',
-            )}
-          >
-            {item.label}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
+function navBadgeClass(nav: string): string {
+  if (nav === 'underway' || nav === 'restricted') {
+    return 'bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-100'
+  }
+  if (nav === 'anchored') {
+    return 'bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100'
+  }
+  if (nav === 'aground') {
+    return 'bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-100'
+  }
+  return 'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-100'
 }
 
 function DetailLine({
@@ -307,26 +373,6 @@ function DetailLine({
       <span className="min-w-0 break-words">{children}</span>
     </p>
   )
-}
-
-function seenSummary(
-  snapshot: SnapshotResponse,
-  locale: 'de' | 'en',
-  compact: boolean,
-  t: (key: string, opts?: Record<string, string>) => string,
-): string | null {
-  const bits: string[] = []
-  if (snapshot.seenAt) bits.push(t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) }))
-  if (snapshot.dataDocked?.seenAt) {
-    bits.push(
-      t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
-        time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
-      }),
-    )
-  } else if (snapshot.dataDocked) {
-    bits.push(t('lastSeenDockedNone'))
-  }
-  return bits.length ? bits.join(' · ') : null
 }
 
 function hasExtraDetails(

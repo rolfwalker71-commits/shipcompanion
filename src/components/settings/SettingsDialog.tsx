@@ -63,6 +63,9 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     if (dataDocked.credits === 0 || dataDocked.remaining <= 0) {
       return `${credits} ${t('trackingDockedEmpty')}`
     }
+    if (dataDocked.lastError) {
+      return `${credits} ${t('trackingDockedError', { error: dataDocked.lastError })}`
+    }
     const when = dataDocked.nextFetchAt ? formatWhen(dataDocked.nextFetchAt, locale) : t('trackingDockedSoon')
     return `${credits} ${t('trackingDockedNext', { when })}`
   }

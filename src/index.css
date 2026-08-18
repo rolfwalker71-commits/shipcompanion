@@ -125,6 +125,16 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
   margin-right: env(safe-area-inset-right, 0px);
 }
 
+[data-map-style='satellite'] .ship-marker {
+  color: white;
+  filter: drop-shadow(0 0 5px black) drop-shadow(0 2px 6px rgb(0 0 0 / 55%));
+}
+
+[data-map-style='satellite'] .port-marker {
+  color: white;
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 70%));
+}
+
 .cruise-div-icon {
   background: transparent !important;
   border: none !important;

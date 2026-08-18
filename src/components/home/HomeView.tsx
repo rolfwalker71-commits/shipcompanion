@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import type { SnapshotResponse, Trip, PortStop } from '@shared/types.ts'
 import { estimatedPosition } from '@shared/geo.ts'
+import { tripShip } from '@shared/ships.ts'
 import { formatMapWhen } from '@shared/time.ts'
 import { useSnapshot } from '@/lib/use-snapshot'
 import { ShipMap, type MapPort } from './ShipMap'
-import { StatusStrip } from './StatusStrip'
+import { StatusStrip, TelemetryBar } from './StatusStrip'
 
 type HomeViewProps = {
   trip: Trip
@@ -12,6 +13,8 @@ type HomeViewProps = {
 
 export function HomeView({ trip }: HomeViewProps) {
   const { snapshot, error, locale, live, estimated } = useSnapshot(trip)
+  const ship = useMemo(() => tripShip(trip), [trip])
+  const lineName = locale === 'de' ? ship?.lineDe || ship?.line : ship?.line
 
   const position = useMemo(() => {
     if (snapshot?.position) return snapshot.position
@@ -50,7 +53,15 @@ export function HomeView({ trip }: HomeViewProps) {
             locale={locale}
             live={live}
             estimated={estimated}
+            shipName={ship?.name}
+            lineName={lineName}
           />
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 w-full px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+        <div className="mx-auto w-full max-w-2xl">
+          <TelemetryBar snapshot={snapshot} locale={locale} />
         </div>
       </div>
     </div>

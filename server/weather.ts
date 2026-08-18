@@ -23,13 +23,20 @@ function skyFromCode(code: number): { de: string; en: string } {
   return LABELS.cloudy
 }
 
-function pack(tempC: number, weatherCode: number): WeatherInfo {
+function pack(
+  tempC: number,
+  weatherCode: number,
+  extra?: { timezone?: string | null; sunrise?: string | null; sunset?: string | null },
+): WeatherInfo {
   const labels = skyFromCode(weatherCode)
   return {
     tempC: Math.round(tempC),
     weatherCode,
     labelDe: labels.de,
     labelEn: labels.en,
+    timezone: extra?.timezone ?? null,
+    sunrise: extra?.sunrise ?? null,
+    sunset: extra?.sunset ?? null,
   }
 }
 
@@ -53,6 +60,8 @@ async function fromOpenMeteo(lat: number, lng: number, at: Date): Promise<Weathe
   url.searchParams.set('longitude', String(lng))
   url.searchParams.set('timezone', 'auto')
   url.searchParams.set('current_weather', 'true')
+  url.searchParams.set('daily', 'sunrise,sunset')
+  url.searchParams.set('forecast_days', '1')
   if (!nearNow) {
     url.searchParams.set('hourly', 'temperature_2m,weather_code')
     url.searchParams.set('forecast_days', '8')
@@ -61,8 +70,15 @@ async function fromOpenMeteo(lat: number, lng: number, at: Date): Promise<Weathe
   const response = await fetch(url, { headers: { Accept: 'application/json' } })
   if (!response.ok) return null
   const data = (await response.json()) as {
+    timezone?: string
     current_weather?: { temperature?: number; weathercode?: number }
+    daily?: { sunrise?: string[]; sunset?: string[] }
     hourly?: { time: string[]; temperature_2m: number[]; weather_code: number[] }
+  }
+  const extra = {
+    timezone: data.timezone ?? null,
+    sunrise: data.daily?.sunrise?.[0] ?? null,
+    sunset: data.daily?.sunset?.[0] ?? null,
   }
 
   if (
@@ -70,7 +86,7 @@ async function fromOpenMeteo(lat: number, lng: number, at: Date): Promise<Weathe
     typeof data.current_weather?.temperature === 'number' &&
     typeof data.current_weather.weathercode === 'number'
   ) {
-    return pack(data.current_weather.temperature, data.current_weather.weathercode)
+    return pack(data.current_weather.temperature, data.current_weather.weathercode, extra)
   }
 
   const times = data.hourly?.time
@@ -88,7 +104,7 @@ async function fromOpenMeteo(lat: number, lng: number, at: Date): Promise<Weathe
   const tempC = data.hourly?.temperature_2m[best]
   const weatherCode = data.hourly?.weather_code[best]
   if (typeof tempC !== 'number' || typeof weatherCode !== 'number') return null
-  return pack(tempC, weatherCode)
+  return pack(tempC, weatherCode, extra)
 }
 
 async function fromMetNorway(lat: number, lng: number, at: Date): Promise<WeatherInfo | null> {

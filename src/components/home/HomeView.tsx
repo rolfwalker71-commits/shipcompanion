@@ -55,6 +55,8 @@ export function HomeView({ trip }: HomeViewProps) {
             estimated={estimated}
             shipName={ship?.name}
             lineName={lineName}
+            ship={ship ?? null}
+            stops={trip.stops}
           />
         </div>
       </div>

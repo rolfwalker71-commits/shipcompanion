@@ -1,7 +1,7 @@
-import { ArrowRight, Gauge, Map as MapIcon } from 'lucide-react'
+import { ArrowRight, Gauge, Map as MapIcon, Moon, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { Trip } from '@shared/types.ts'
-import { formatWhen } from '@shared/time.ts'
+import { DISPLAY_TZ, formatClock, formatWhen } from '@shared/time.ts'
 import { useCompactUi } from '@/lib/compact'
 import { useSnapshot } from '@/lib/use-snapshot'
 import { Badge } from '@/components/ui/badge'
@@ -45,6 +45,36 @@ export function WidgetView({ trip }: WidgetViewProps) {
               <p className="min-w-0 truncate text-lg font-semibold">{here}</p>
             </div>
             <p className="text-base leading-relaxed">{snapshot.narrative || t('narrativeEmpty')}</p>
+            <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <span>
+                {t('clockHome')}{' '}
+                <span className="font-semibold tabular-nums text-foreground">
+                  {formatClock(new Date(), locale, DISPLAY_TZ)}
+                </span>
+              </span>
+              <span>
+                {t('clockShip')}{' '}
+                <span className="font-semibold tabular-nums text-foreground">
+                  {formatClock(new Date(), locale, snapshot.shipTz || DISPLAY_TZ)}
+                </span>
+              </span>
+              {snapshot.sun ? (
+                <>
+                  <span className="inline-flex items-center gap-1">
+                    <Sun className="h-3.5 w-3.5 text-amber-500" aria-hidden />
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {formatClock(new Date(snapshot.sun.sunrise), locale, snapshot.shipTz || DISPLAY_TZ)}
+                    </span>
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <Moon className="h-3.5 w-3.5 text-indigo-400" aria-hidden />
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {formatClock(new Date(snapshot.sun.sunset), locale, snapshot.shipTz || DISPLAY_TZ)}
+                    </span>
+                  </span>
+                </>
+              ) : null}
+            </p>
             <div className="flex flex-wrap gap-2">
               {speedKmh != null ? (
                 <Badge className="gap-1.5 px-2.5 py-1 text-sm">

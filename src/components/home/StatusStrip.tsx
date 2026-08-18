@@ -1,16 +1,16 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
+import { ArrowDown, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
-import { resolveAisDestination } from '@shared/ais.ts'
-import { formatArrivalParts, formatSeen, formatWhen } from '@shared/time.ts'
-import { useCompactUi } from '@/lib/compact'
+import type { CruiseShip, PortStop, SnapshotResponse, WeatherInfo } from '@shared/types.ts'
+import { formatArrivalParts } from '@shared/time.ts'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { ShipFactsDialog } from './ShipFactsDialog'
+import { TodayPanel } from './TodayPanel'
 
-const PAGE_COUNT = 3
+const PAGE_COUNT = 2
 
 type StatusStripProps = {
   snapshot: SnapshotResponse | null
@@ -20,16 +20,27 @@ type StatusStripProps = {
   estimated: boolean
   shipName?: string
   lineName?: string
+  ship?: CruiseShip | null
+  stops?: PortStop[]
 }
 
-export function StatusStrip({ snapshot, error, locale, live, estimated, shipName, lineName }: StatusStripProps) {
+export function StatusStrip({
+  snapshot,
+  error,
+  locale,
+  live,
+  estimated,
+  shipName,
+  lineName,
+  ship = null,
+  stops = [],
+}: StatusStripProps) {
   const { t } = useTranslation()
-  const compact = useCompactUi()
   const scroller = useRef<HTMLDivElement>(null)
   const pagesRef = useRef<(HTMLElement | null)[]>([])
   const [page, setPage] = useState(0)
   const [pageHeight, setPageHeight] = useState<number>()
-  const when = (iso: string) => formatWhen(iso, locale, !compact)
+  const [factsOpen, setFactsOpen] = useState(false)
 
   useLayoutEffect(() => {
     const el = pagesRef.current[page]
@@ -39,7 +50,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
     const observer = new ResizeObserver(update)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [page, snapshot, compact, locale, live, estimated, error])
+  }, [page, snapshot, locale, live, estimated, error, stops])
 
   function goTo(next: number) {
     const el = scroller.current
@@ -66,8 +77,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
 
   const atPort = snapshot.nextPort.atPort
   const here = atPort ? snapshot.nextPort.berthName ?? snapshot.nextPort.name : snapshot.nextPort.name
-  const nextName = snapshot.nextPort.name
-  const hasNext = !atPort || (snapshot.nextPort.berthName != null && snapshot.nextPort.berthName !== nextName)
   const nav = snapshot.motion?.nav ?? (atPort ? 'moored' : 'unknown')
   const navLabel =
     nav === 'moored'
@@ -83,17 +92,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
               : null
   const fromName = !atPort ? snapshot.fromPort : null
   const pocName = here
-  const arrivalIso = !atPort && snapshot.voyage?.eta ? snapshot.voyage.eta : snapshot.nextPort.arriveAt
-  const arrival = formatArrivalParts(arrivalIso, locale)
-  const reported = snapshot.voyage?.destination?.trim() || null
-  const reportedPlace = reported ? resolveAisDestination(reported, [], locale) ?? reported : null
-  const showReported =
-    reportedPlace != null && !samePlace(reportedPlace, here) && !samePlace(reportedPlace, nextName)
-  const aisEta = snapshot.voyage?.eta ?? null
-  const showAisEta =
-    !atPort &&
-    aisEta != null &&
-    Math.abs(new Date(aisEta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) > 90 * 60 * 1000
+  const departure = fromName && snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale) : null
+  const arrival = formatArrivalParts(snapshot.nextPort.arriveAt, locale)
 
   return (
     <Card className="pointer-events-auto w-full overflow-visible px-3 py-2 shadow-xl ring-0 sm:px-4 sm:py-3">
@@ -127,9 +127,12 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
             >
               {fromName ? (
                 <>
-                  <p className="flex min-w-0 items-center gap-1.5 text-base font-semibold leading-tight sm:text-lg">
-                    <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
-                    <span className="min-w-0 truncate">{fromName}</span>
+                  <p className="flex min-w-0 items-center gap-4 text-base font-semibold leading-tight sm:text-lg">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
+                      <span className="min-w-0 truncate">{fromName}</span>
+                    </span>
+                    {departure ? <ScheduleStamp label={t('departLabel')} parts={departure} /> : null}
                   </p>
                   <ArrowDown
                     className="my-0.5 ml-0.5 h-4 w-4 text-muted-foreground sm:ml-1 sm:h-5 sm:w-5"
@@ -142,20 +145,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
                   <MapPinned className="h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
                   <span className="min-w-0 truncate">{pocName}</span>
                 </span>
-                {arrival ? (
-                  <span className="shrink-0 text-xs font-medium leading-tight text-muted-foreground sm:text-sm">
-                    {t('arrival')} {arrival.day}{' '}
-                    <span className="font-semibold tabular-nums text-foreground">
-                      {arrival.time} {arrival.offset}
-                    </span>
-                    {arrival.homeTime ? (
-                      <>
-                        {' · '}
-                        <span className="font-semibold tabular-nums text-foreground">{arrival.homeTime} UTC+2</span>
-                      </>
-                    ) : null}
-                  </span>
-                ) : null}
+                {arrival ? <ScheduleStamp label={t('arrival')} parts={arrival} /> : null}
               </p>
             </div>
             {snapshot.weather ? (
@@ -176,66 +166,10 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
         </section>
         <section
           ref={bindPage(1)}
-          className="flex w-full shrink-0 snap-start basis-full flex-col justify-center pr-1"
-          aria-label={t('story')}
+          className="w-full shrink-0 snap-start basis-full pr-1"
+          aria-label={t('today')}
         >
-          <p className="text-base leading-relaxed sm:text-lg">{snapshot.narrative || t('narrativeEmpty')}</p>
-        </section>
-        <section ref={bindPage(2)} className="w-full shrink-0 snap-start basis-full pr-1" aria-label={t('details')}>
-          <div className="flex flex-col gap-1.5">
-            {hasNext && atPort ? (
-              <DetailLine icon={<ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />}>
-                {nextName} • {when(snapshot.nextPort.arriveAt)}
-              </DetailLine>
-            ) : null}
-            {showReported ? (
-              <DetailLine>{t('reportedDest', { name: reportedPlace ?? '' })}</DetailLine>
-            ) : null}
-            {showAisEta && aisEta ? (
-              <DetailLine muted>{t('aisEta', { time: when(aisEta) })}</DetailLine>
-            ) : null}
-            {snapshot.departure ? (
-              <DetailLine icon={<Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />} muted>
-                {`${t('departPlanned')} ${when(snapshot.departure.planned)}`}
-              </DetailLine>
-            ) : null}
-            {snapshot.departure?.actual ? (
-              <DetailLine icon={<Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />}>
-                {`${t('departActual')} ${when(snapshot.departure.actual)}`}
-              </DetailLine>
-            ) : snapshot.departure ? (
-              <DetailLine icon={<Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />} muted>
-                {`${t('departActual')} ${atPort ? t('departPending') : t('departUnknown')}`}
-              </DetailLine>
-            ) : null}
-            {snapshot.seenAt ? (
-              <DetailLine>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</DetailLine>
-            ) : null}
-            {snapshot.dataDocked?.seenAt ? (
-              <DetailLine>
-                {t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
-                  time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
-                })}
-              </DetailLine>
-            ) : snapshot.dataDocked?.lastError ? (
-              <DetailLine muted>{t('lastSeenDockedError', { error: snapshot.dataDocked.lastError })}</DetailLine>
-            ) : snapshot.dataDocked ? (
-              <DetailLine muted>{t('lastSeenDockedNone')}</DetailLine>
-            ) : null}
-            {snapshot.dataDocked ? (
-              <DetailLine muted>{t('dockedRemaining', { count: snapshot.dataDocked.remaining })}</DetailLine>
-            ) : null}
-            {snapshot.tracking === 'no-key' ? (
-              <DetailLine muted>{t('approxNoKey')}</DetailLine>
-            ) : snapshot.tracking === 'ais-error' ? (
-              <DetailLine muted>{t('approxAisError')}</DetailLine>
-            ) : snapshot.tracking === 'estimated' ? (
-              <DetailLine muted>{t('approxEstimate')}</DetailLine>
-            ) : null}
-            {!hasExtraDetails(snapshot, hasNext && atPort, showReported, showAisEta) ? (
-              <p className="text-sm text-muted-foreground">{t('detailsEmpty')}</p>
-            ) : null}
-          </div>
+          <TodayPanel snapshot={snapshot} locale={locale} stops={stops} />
         </section>
       </div>
       <div className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
@@ -253,7 +187,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
               variant="ghost"
               size="icon"
               role="tab"
-              aria-label={index === 0 ? t('facts') : index === 1 ? t('story') : t('details')}
+              aria-label={index === 0 ? t('facts') : t('today')}
               aria-selected={page === index}
               onClick={() => goTo(index)}
             >
@@ -261,19 +195,21 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
             </Button>
           ))}
         </div>
-        <div
-          className="min-w-0 text-right leading-tight"
-          title={[shipName, lineName].filter(Boolean).join(' · ')}
-          aria-label={[shipName, lineName].filter(Boolean).join(', ')}
+        <Button
+          variant="ghost"
+          className="h-auto min-h-11 min-w-0 flex-col items-end justify-center gap-0 whitespace-normal px-1 py-1 text-right leading-tight"
+          onClick={() => setFactsOpen(true)}
+          aria-label={t('shipFacts')}
         >
           {shipName ? (
-            <p className="truncate text-[10px] font-semibold text-foreground sm:text-xs">{shipName}</p>
+            <span className="block truncate text-[10px] font-semibold text-foreground sm:text-xs">{shipName}</span>
           ) : null}
           {lineName ? (
-            <p className="truncate text-[10px] text-muted-foreground sm:text-xs">{lineName}</p>
+            <span className="block truncate text-[10px] text-muted-foreground sm:text-xs">{lineName}</span>
           ) : null}
-        </div>
+        </Button>
       </div>
+      <ShipFactsDialog open={factsOpen} onOpenChange={setFactsOpen} ship={ship} />
     </Card>
   )
 }
@@ -345,6 +281,29 @@ type Metric = {
   muted?: boolean
 }
 
+function ScheduleStamp({
+  label,
+  parts,
+}: {
+  label: string
+  parts: ReturnType<typeof formatArrivalParts>
+}) {
+  return (
+    <span className="shrink-0 text-xs font-medium leading-tight text-muted-foreground sm:text-sm">
+      {label} {parts.day}{' '}
+      <span className="font-semibold tabular-nums text-foreground">
+        {parts.time} {parts.offset}
+      </span>
+      {parts.homeTime ? (
+        <>
+          {' · '}
+          <span className="font-semibold tabular-nums text-foreground">{parts.homeTime} UTC+2</span>
+        </>
+      ) : null}
+    </span>
+  )
+}
+
 function navBadgeClass(nav: string): string {
   if (nav === 'underway' || nav === 'restricted') {
     return 'bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-100'
@@ -356,42 +315,6 @@ function navBadgeClass(nav: string): string {
     return 'bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-100'
   }
   return 'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-100'
-}
-
-function DetailLine({
-  icon,
-  children,
-  muted = false,
-}: {
-  icon?: React.ReactNode
-  children: React.ReactNode
-  muted?: boolean
-}) {
-  return (
-    <p className={cn('flex items-start gap-2 text-sm leading-snug', muted ? 'text-muted-foreground' : 'text-foreground')}>
-      {icon ? <span className="mt-0.5 shrink-0">{icon}</span> : null}
-      <span className="min-w-0 break-words">{children}</span>
-    </p>
-  )
-}
-
-function hasExtraDetails(
-  snapshot: SnapshotResponse,
-  nextAtPort: boolean,
-  showReported: boolean,
-  showAisEta: boolean,
-): boolean {
-  return Boolean(
-    nextAtPort ||
-      showReported ||
-      showAisEta ||
-      snapshot.departure ||
-      snapshot.seenAt ||
-      snapshot.dataDocked ||
-      snapshot.tracking === 'no-key' ||
-      snapshot.tracking === 'ais-error' ||
-      snapshot.tracking === 'estimated',
-  )
 }
 
 function WeatherGlyph({ code, className = 'h-4 w-4' }: { code: WeatherInfo['weatherCode']; className?: string }) {
@@ -427,15 +350,4 @@ function compassDir(degrees: number, locale: 'de' | 'en'): string {
     locale === 'de' ? ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'] : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
   const sector = (((degrees % 360) + 360) % 360) / 45
   return dirs[Math.round(sector) % 8]
-}
-
-function samePlace(a: string, b: string): boolean {
-  const left = a.trim().toLowerCase()
-  const right = b.trim().toLowerCase()
-  if (!left || !right) return false
-  if (left === right || left.includes(right) || right.includes(left)) return true
-  const tokens = (value: string) => value.split(/[^a-z0-9äöüß]+/i).filter((part) => part.length >= 3)
-  const aTok = tokens(left)
-  const bTok = tokens(right)
-  return aTok.some((part) => bTok.some((other) => other.includes(part) || part.includes(other)))
 }

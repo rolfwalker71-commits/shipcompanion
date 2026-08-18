@@ -51,6 +51,9 @@ export type WeatherInfo = {
   weatherCode: number
   labelDe: string
   labelEn: string
+  timezone?: string | null
+  sunrise?: string | null
+  sunset?: string | null
 }
 
 export type SnapshotRequest = {
@@ -93,6 +96,8 @@ export type SnapshotResponse = {
   fromPort: string | null
   distanceKm: number | null
   weather: WeatherInfo | null
+  sun: { sunrise: string; sunset: string } | null
+  shipTz: string
   narrative: string
   path: GeoPoint[]
   track: GeoPoint[]

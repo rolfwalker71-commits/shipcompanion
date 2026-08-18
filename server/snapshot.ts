@@ -11,6 +11,7 @@ import {
 } from './datadocked.ts'
 import { fetchWeather } from './weather.ts'
 import { narrate } from './narrate.ts'
+import { sunTimes, tzFromLongitude } from '../shared/sun.ts'
 import type { DockedFix } from './datadocked.ts'
 import type { LiveFix } from './ais.ts'
 
@@ -166,6 +167,10 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
       departAt: atPort ? shown.departAt : null,
     },
     weather,
+    sun: sunTimes(position.lat, position.lng, now) ?? (weather?.sunrise && weather?.sunset
+      ? { sunrise: weather.sunrise, sunset: weather.sunset }
+      : null),
+    shipTz: weather?.timezone || tzFromLongitude(position.lng),
     narrative,
     path: routePath(body.stops),
     track,

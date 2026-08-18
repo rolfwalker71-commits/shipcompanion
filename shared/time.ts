@@ -26,6 +26,14 @@ function clock(date: Date, locale: Locale, timeZone: string): string {
   }).format(date)
 }
 
+export function formatClock(date: Date, locale: Locale, timeZone: string): string {
+  try {
+    return clock(date, locale, timeZone)
+  } catch {
+    return clock(date, locale, DISPLAY_TZ)
+  }
+}
+
 function utcOffsetLabel(date: Date): string {
   const raw = new Intl.DateTimeFormat('en-GB', {
     timeZone: DISPLAY_TZ,

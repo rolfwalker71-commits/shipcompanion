@@ -14,6 +14,11 @@ clientsClaim()
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
 
+registerRoute(({ url }) => url.pathname.startsWith('/api/photos'), new NetworkFirst({
+  cacheName: 'board-photos',
+  plugins: [new ExpirationPlugin({ maxEntries: 4, maxAgeSeconds: 60 * 60 * 24 * 14 })],
+}))
+
 registerRoute(({ url }) => url.pathname.startsWith('/api/'), new NetworkOnly())
 
 registerRoute(

@@ -1,6 +1,7 @@
 import type { Locale, SnapshotResponse, Trip } from '@shared/types.ts'
 import { estimatedPosition, findLeg, forecastPath, haversineKm, routePath } from '@shared/geo.ts'
 import { tripShip } from '@shared/ships.ts'
+import { sunTimes, tzFromLongitude } from '@shared/sun.ts'
 import { formatWhen } from '@shared/time.ts'
 
 export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse | null {
@@ -53,6 +54,8 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
     fromPort,
     distanceKm: !atPort ? Math.round(haversineKm(guessed.point, dest)) : null,
     weather: null,
+    sun: sunTimes(guessed.point.lat, guessed.point.lng),
+    shipTz: tzFromLongitude(guessed.point.lng),
     narrative,
     path: routePath(trip.stops),
     track: [],

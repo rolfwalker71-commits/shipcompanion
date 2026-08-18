@@ -24,6 +24,7 @@ import { buildSnapshot } from './snapshot.ts'
 import { listTimeline } from './timeline.ts'
 import { pushPublicKey, removePushSub, savePushSub } from './push.ts'
 import { startTripWatch } from './watch.ts'
+import { clearPhoto, photoMeta, readPhoto, savePhoto } from './photos.ts'
 
 config()
 
@@ -184,6 +185,33 @@ app.post('/api/snapshot', async (c) => {
     console.warn('snapshot failed:', error instanceof Error ? error.message : error)
     return c.json({ error: 'snapshot_failed' }, 500)
   }
+})
+
+app.get('/api/photos', (c) => {
+  return c.json({ photo: photoMeta() })
+})
+
+app.get('/api/photos/latest', async (c) => {
+  const bytes = await readPhoto()
+  if (!bytes) return c.body(null, 404)
+  c.header('Content-Type', 'image/jpeg')
+  c.header('Cache-Control', 'private, max-age=120')
+  return c.body(new Uint8Array(bytes))
+})
+
+app.post('/api/photos', async (c) => {
+  const body = await c.req.parseBody().catch(() => null)
+  const file = body?.photo
+  if (!(file instanceof File)) return c.json({ error: 'missing_photo' }, 400)
+  const buf = Buffer.from(await file.arrayBuffer())
+  const meta = await savePhoto(buf)
+  if (!meta) return c.json({ error: 'photo_too_large' }, 413)
+  return c.json({ photo: meta })
+})
+
+app.delete('/api/photos', async (c) => {
+  await clearPhoto()
+  return c.json({ ok: true })
 })
 
 if (isProd && existsSync('dist/index.html')) {

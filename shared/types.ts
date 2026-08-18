@@ -99,6 +99,19 @@ export type SnapshotResponse = {
   forecast: GeoPoint[]
 }
 
+export type VesselFinderStatus = {
+  configured: boolean
+  usedThisMonth: number
+  monthlyLimit: number
+  remaining: number
+  credits: number | null
+  expiration: string | null
+  lastFetchAt: string | null
+  nextFetchAt: string | null
+  lastError: string | null
+  lastSource: 'TER' | 'SAT' | null
+}
+
 export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back'
 
 export type TimelineEvent = {

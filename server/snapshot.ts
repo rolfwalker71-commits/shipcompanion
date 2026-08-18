@@ -2,7 +2,12 @@ import type { AisNavState, SnapshotRequest, SnapshotResponse } from '../shared/t
 import { estimatedPosition, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
 import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, actualDeparture, voyageOf, aisTrail } from './ais.ts'
-import { fetchVesselFinder, vesselFinderConfigured, vesselFinderError } from './vesselfinder.ts'
+import {
+  lastVesselFinderFix,
+  refreshVesselFinderIfNeeded,
+  vesselFinderConfigured,
+  vesselFinderError,
+} from './vesselfinder.ts'
 import { fetchWeather } from './weather.ts'
 import { narrate } from './narrate.ts'
 
@@ -19,12 +24,14 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
   const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
   const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 4000) : lastKnownPosition(body.mmsi)
-  const finderFix = vesselFinderConfigured()
-    ? await fetchVesselFinder(body.mmsi, body.imo).catch(() => null)
-    : null
-
-  const liveMs = 45 * 60 * 1000
   const known = streamFix ?? lastKnownPosition(body.mmsi)
+  const liveMs = 45 * 60 * 1000
+  const streamAge = known ? now.getTime() - known.ts : Number.POSITIVE_INFINITY
+  const streamLive = Boolean(known) && streamAge < liveMs
+  const finderFix =
+    (await refreshVesselFinderIfNeeded(body.mmsi, body.imo, streamLive).catch(() => lastVesselFinderFix())) ??
+    lastVesselFinderFix()
+
   const aisPoint = newerStamp(known, finderFix)
   const aisAge = aisPoint ? now.getTime() - aisPoint.ts : Number.POSITIVE_INFINITY
   const aisLive = Boolean(aisPoint) && aisAge < liveMs
@@ -33,7 +40,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   const streamError = aisError()
   const finderError = vesselFinderError(body.mmsi)
-  const hasTracker = aisConfigured()
+  const hasTracker = aisConfigured() || vesselFinderConfigured()
   const tracking = aisPoint
     ? aisLive
       ? 'live'
@@ -49,14 +56,12 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
-  const motionFix = known
+  const motionFix = streamLive && known ? known : finderFix ?? known
   const nav = motionFix
     ? navStateFromAis(motionFix.navStatus, motionFix.sog)
-    : aisPoint
-      ? 'unknown'
-      : guessed.atPort
-        ? 'moored'
-        : 'unknown'
+    : guessed.atPort
+      ? 'moored'
+      : 'unknown'
   const berth = pickBerth(body.stops, aisPoint, leg, guessed.atPort, nav)
   const atPort = Boolean(berth)
   const shown = berth ?? next
@@ -70,10 +75,9 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     body.stops,
     body.locale,
   )
+  const voyageEta = streamVoyage?.eta ?? finderFix?.eta ?? null
   const voyage =
-    aisDestination || streamVoyage?.eta
-      ? { destination: aisDestination, eta: streamVoyage?.eta ?? null }
-      : null
+    aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
   const weather =
     (await weatherPromise) ??
     (await fetchWeather(position.lat, position.lng, now).catch(() => null))
@@ -98,7 +102,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     nav,
     zone: finderFix?.zone ?? null,
     aisDestination,
-    aisEta: streamVoyage?.eta ?? null,
+    aisEta: voyageEta,
   })
 
   return {

@@ -32,7 +32,10 @@ Port **3344**. Keys stay in `.env` on the server, never in the browser bundle.
 | `APP_ACCESS_KEY` | Family login (required) |
 | `AISSTREAM_API_KEY` | Free live AIS for one ship; last position is cached |
 | `OPENAI_API_KEY` | Spoken status sentence; template if empty |
-| `VESSELFINDER_API_KEY` | Optional paid satellite positions; not needed for family use |
+| `VESSELFINDER_API_KEY` | Optional paid AIS when coastal AIS is quiet (default: max 150/month, every 5h) |
+| `VESSELFINDER_MONTHLY_LIMIT` | Monthly request cap (default 150) |
+| `VESSELFINDER_MIN_INTERVAL_HOURS` | Minimum hours between paid requests (default 5) |
+| `VESSELFINDER_SATELLITE` | `1` (default) includes satellite positions when newer |
 | `COOKIE_SECURE` | `true` erzwingt Secure-Cookies. Hinter HTTPS sonst über `X-Forwarded-Proto`, immer `SameSite=Lax`. |
 | `PORT` | HTTP port (default 3344 in production) |
 

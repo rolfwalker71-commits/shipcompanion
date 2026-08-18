@@ -11,6 +11,7 @@ type WatchState = {
   portName: string
   tracking: TrackingStatus
   distanceKm: number | null
+  seenSource?: 'ais' | 'datadocked' | null
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -41,13 +42,14 @@ async function tick(): Promise<void> {
     portName: snapshot.nextPort.berthName ?? snapshot.nextPort.name,
     tracking: snapshot.tracking,
     distanceKm: snapshot.distanceKm,
+    seenSource: snapshot.seenSource,
   }
   const events = diffWatch(previous, next, snapshot)
   previous = next
   await writeJson('watch-state.json', next)
   for (const event of events) {
     await addTimelineEvent(event)
-    await notifyFamily(event.titleDe, event.detailDe ?? event.titleDe, '/')
+    await notifyFamily(event.titleDe, event.detailDe ?? event.titleDe, '/', `cruise-${event.kind}`)
   }
 }
 
@@ -102,10 +104,25 @@ function diffWatch(prev: WatchState | null, next: WatchState, snapshot: Snapshot
     })
   }
   if (
-    (prev?.tracking === 'last-known' || prev?.tracking === 'estimated') &&
-    next.tracking === 'live' &&
-    !recentlyLogged('ais-back', 2 * 60 * 60 * 1000)
+    prev?.seenSource &&
+    prev.seenSource !== 'datadocked' &&
+    next.seenSource === 'datadocked' &&
+    !recentlyLogged('docked-back', 2 * 60 * 60 * 1000)
   ) {
+    const sat = snapshot.dataDocked?.source === 'SAT'
+    events.push({
+      kind: 'docked-back',
+      titleDe: sat ? 'Satellitenposition von Data Docked' : 'Neue Position von Data Docked',
+      titleEn: sat ? 'Satellite position from Data Docked' : 'New position from Data Docked',
+      detailDe: ship,
+      detailEn: ship,
+    })
+  }
+  const aisReturned =
+    next.seenSource === 'ais' &&
+    (((prev?.tracking === 'last-known' || prev?.tracking === 'estimated') && next.tracking === 'live') ||
+      prev?.seenSource === 'datadocked')
+  if (aisReturned && !recentlyLogged('ais-back', 2 * 60 * 60 * 1000)) {
     events.push({
       kind: 'ais-back',
       titleDe: 'AIS ist wieder da',

@@ -34,9 +34,9 @@ export async function removePushSub(endpoint: string): Promise<void> {
   await writeJson('push-subs.json', subs)
 }
 
-export async function notifyFamily(title: string, body: string, url = '/'): Promise<void> {
+export async function notifyFamily(title: string, body: string, url = '/', tag = 'cruise-family'): Promise<void> {
   if (!subs.length) return
-  const payload = JSON.stringify({ title, body, url, tag: 'cruise-family' })
+  const payload = JSON.stringify({ title, body, url, tag })
   const kept: PushSub[] = []
   await Promise.all(
     subs.map(async (sub) => {

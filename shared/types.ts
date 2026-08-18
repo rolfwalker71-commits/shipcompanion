@@ -126,7 +126,7 @@ export type DataDockedStatus = {
   pinConfigured: boolean
 }
 
-export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back'
+export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back' | 'docked-back'
 
 export type TimelineEvent = {
   id: string

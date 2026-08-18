@@ -11,9 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { formatWhen } from '@shared/time.ts'
 import { useTheme, type Theme } from '@/lib/theme'
 import { useAuth } from '@/lib/auth'
 import { disablePush, enablePush, notificationState, pushSupported } from '@/lib/push'
+import type { DataDockedStatus } from '@shared/types.ts'
 
 type SettingsDialogProps = {
   open: boolean
@@ -27,6 +29,7 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
   const { logout } = useAuth()
   const [lang, setLang] = useState(i18n.language.startsWith('de') ? 'de' : 'en')
   const [trackerOn, setTrackerOn] = useState(false)
+  const [dataDocked, setDataDocked] = useState<DataDockedStatus | null>(null)
   const [push, setPush] = useState<'unsupported' | 'denied' | 'off' | 'on'>('off')
   const [pushBusy, setPushBusy] = useState(false)
 
@@ -38,14 +41,31 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     if (!open) return
     void fetch('/api/status', { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: { aisConfigured?: boolean } | null) => {
+      .then((data: { aisConfigured?: boolean; dataDocked?: DataDockedStatus } | null) => {
         setTrackerOn(Boolean(data?.aisConfigured))
+        setDataDocked(data?.dataDocked ?? null)
       })
       .catch(() => {
         setTrackerOn(false)
+        setDataDocked(null)
       })
     void notificationState().then(setPush)
   }, [open])
+
+  const locale = lang === 'en' ? 'en' : 'de'
+
+  function dataDockedLine(): string {
+    if (!dataDocked?.configured) return t('trackingDockedOff')
+    const credits =
+      dataDocked.credits != null
+        ? t('trackingDockedCredits', { credits: dataDocked.credits })
+        : t('trackingDockedQuota', { used: dataDocked.usedThisMonth, limit: dataDocked.monthlyLimit })
+    if (dataDocked.credits === 0 || dataDocked.remaining <= 0) {
+      return `${credits} ${t('trackingDockedEmpty')}`
+    }
+    const when = dataDocked.nextFetchAt ? formatWhen(dataDocked.nextFetchAt, locale) : t('trackingDockedSoon')
+    return `${credits} ${t('trackingDockedNext', { when })}`
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -59,6 +79,7 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
             <p className="text-sm leading-relaxed text-muted-foreground">
               {trackerOn ? t('trackingLive') : t('trackingOff')}
             </p>
+            <p className="text-sm leading-relaxed text-muted-foreground">{dataDockedLine()}</p>
           </div>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 space-y-1">

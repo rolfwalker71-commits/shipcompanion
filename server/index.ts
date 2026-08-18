@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { SnapshotRequest } from '../shared/types.ts'
 import { aisConfigured, aisError } from './ais.ts'
+import { dataDockedStatus } from './datadocked.ts'
 import {
   COOKIE_NAME,
   allowLoginAttempt,
@@ -129,6 +130,7 @@ app.use('/api/*', async (c, next) => {
 app.get('/api/status', (c) => {
   return c.json({
     aisConfigured: aisConfigured(),
+    dataDocked: dataDockedStatus(),
     llmConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
     aisError: aisError(),
   })

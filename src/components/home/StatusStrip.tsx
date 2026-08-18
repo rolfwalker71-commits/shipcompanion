@@ -176,15 +176,31 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
                 {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
               </Badge>
             ) : null}
+            {snapshot.dataDocked ? (
+              <Badge className={`${chip} text-muted-foreground`}>
+                {t('dockedRemaining', { count: snapshot.dataDocked.remaining })}
+              </Badge>
+            ) : null}
           </div>
           <div className="mt-2 flex items-end justify-between gap-3">
             {error ? (
               <p className="min-w-0 text-xs text-muted-foreground" role="status">
                 {t('statusError')}
               </p>
-            ) : snapshot.seenAt ? (
+            ) : snapshot.seenAt || snapshot.dataDocked?.seenAt ? (
               <div className="min-w-0 text-xs leading-snug text-muted-foreground">
-                <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
+                {snapshot.seenAt ? (
+                  <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
+                ) : null}
+                {snapshot.dataDocked?.seenAt ? (
+                  <p>
+                    {t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
+                      time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
+                    })}
+                  </p>
+                ) : snapshot.dataDocked ? (
+                  <p>{t('lastSeenDockedNone')}</p>
+                ) : null}
                 {snapshot.tracking === 'estimated' ? <p>{t('approxEstimate')}</p> : null}
               </div>
             ) : snapshot.tracking === 'no-key' ? (

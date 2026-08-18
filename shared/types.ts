@@ -65,7 +65,7 @@ export type SnapshotResponse = {
   position: GeoPoint & { source: PositionSource }
   tracking: TrackingStatus
   seenAt: string | null
-  seenSource: 'ais' | null
+  seenSource: 'ais' | 'datadocked' | null
   motion: {
     nav: AisNavState
     sogKn: number | null
@@ -98,6 +98,24 @@ export type SnapshotResponse = {
   track: GeoPoint[]
   gap: GeoPoint[]
   forecast: GeoPoint[]
+  dataDocked: {
+    remaining: number
+    monthlyLimit: number
+    seenAt: string | null
+    source: 'TER' | 'SAT' | null
+  } | null
+}
+
+export type DataDockedStatus = {
+  configured: boolean
+  usedThisMonth: number
+  monthlyLimit: number
+  remaining: number
+  credits: number | null
+  lastFetchAt: string | null
+  nextFetchAt: string | null
+  lastError: string | null
+  lastSource: 'TER' | 'SAT' | null
 }
 
 export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back'

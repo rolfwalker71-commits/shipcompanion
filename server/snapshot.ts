@@ -2,8 +2,28 @@ import type { AisNavState, SnapshotRequest, SnapshotResponse } from '../shared/t
 import { estimatedPosition, estimateUnderway, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
 import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail } from './ais.ts'
+import {
+  dataDockedConfigured,
+  dataDockedError,
+  dataDockedStatus,
+  lastDataDockedFix,
+  refreshDataDockedIfNeeded,
+} from './datadocked.ts'
 import { fetchWeather } from './weather.ts'
 import { narrate } from './narrate.ts'
+import type { DockedFix } from './datadocked.ts'
+import type { LiveFix } from './ais.ts'
+
+type ReceivedFix = {
+  lat: number
+  lng: number
+  ts: number
+  sog?: number | null
+  cog?: number | null
+  heading?: number | null
+  navStatus?: number | null
+  fromDocked: boolean
+}
 
 export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResponse | { error: string; status: 400 }> {
   if (!body?.mmsi || !body.shipName || !body.stops?.length) {
@@ -18,24 +38,30 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
   const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
   const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 4000) : lastKnownPosition(body.mmsi)
-  const known = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
+  const aisFix = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
   const liveMs = 45 * 60 * 1000
-  const aisAge = known ? now.getTime() - known.ts : Number.POSITIVE_INFINITY
-  const aisLive = Boolean(known) && aisAge < liveMs
-  const guessed = estimatedPosition(body.stops, now, known)
+  const aisAge = aisFix ? now.getTime() - aisFix.ts : Number.POSITIVE_INFINITY
+  const aisLive = Boolean(aisFix) && aisAge < liveMs
+  const dockedFix =
+    (await refreshDataDockedIfNeeded(body.mmsi, aisLive).catch(() => lastDataDockedFix())) ?? lastDataDockedFix()
+  const received = pickReceivedFix(aisFix, dockedFix)
+  const receivedAge = received ? now.getTime() - received.ts : Number.POSITIVE_INFINITY
+  const receivedLive = Boolean(received) && receivedAge < liveMs
+  const guessed = estimatedPosition(body.stops, now, received)
   if (!guessed) return { error: 'no_route', status: 400 }
 
   const streamError = aisError()
-  const hasTracker = aisConfigured()
+  const dockedError = dataDockedError()
+  const hasTracker = aisConfigured() || dataDockedConfigured()
   const estimate =
-    !aisLive && known && !guessed.atPort
+    !receivedLive && received && !guessed.atPort
       ? estimateUnderway(
           {
-            lat: known.lat,
-            lng: known.lng,
-            ts: known.ts,
-            sogKn: known.sog,
-            cog: known.cog ?? known.heading,
+            lat: received.lat,
+            lng: received.lng,
+            ts: received.ts,
+            sogKn: received.sog,
+            cog: received.cog ?? received.heading,
           },
           guessed.next,
           now,
@@ -43,37 +69,39 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
         )
       : null
 
-  const tracking = aisLive
+  const tracking = receivedLive
     ? 'live'
     : estimate
       ? 'estimated'
-      : known
+      : received
         ? 'last-known'
         : !hasTracker
           ? 'no-key'
-          : streamError
+          : streamError && !dataDockedConfigured()
             ? 'ais-error'
-            : 'estimated'
+            : dockedError && !aisConfigured()
+              ? 'ais-error'
+              : 'estimated'
 
-  const position = aisLive && known
-    ? { lat: known.lat, lng: known.lng, source: 'live' as const }
+  const position = receivedLive && received
+    ? { lat: received.lat, lng: received.lng, source: 'live' as const }
     : estimate
       ? { lat: estimate.point.lat, lng: estimate.point.lng, source: 'approx' as const }
       : guessed.atPort
         ? { ...guessed.point, source: 'approx' as const }
-        : known
-          ? { lat: known.lat, lng: known.lng, source: 'approx' as const }
+        : received
+          ? { lat: received.lat, lng: received.lng, source: 'approx' as const }
           : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
   const nav = estimate
     ? 'underway'
-    : known
-      ? navStateFromAis(known.navStatus, known.sog)
+    : received
+      ? navStateFromAis(received.navStatus, received.sog)
       : guessed.atPort
         ? 'moored'
         : 'unknown'
-  const berth = estimate ? null : pickBerth(body.stops, known, leg, guessed.atPort, nav)
+  const berth = estimate ? null : pickBerth(body.stops, received, leg, guessed.atPort, nav)
   const atPort = Boolean(berth)
   const shown = berth ?? next
   const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
@@ -81,8 +109,12 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const destination = following ?? shown
   const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
   const streamVoyage = voyageOf(body.mmsi)
-  const aisDestination = resolveAisDestination(streamVoyage?.destination ?? null, body.stops, body.locale)
-  const voyageEta = streamVoyage?.eta ?? null
+  const aisDestination = resolveAisDestination(
+    streamVoyage?.destination ?? dockedFix?.destination ?? null,
+    body.stops,
+    body.locale,
+  )
+  const voyageEta = streamVoyage?.eta ?? dockedFix?.eta ?? null
   const voyage =
     aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
   const weather =
@@ -92,7 +124,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const departStop = atPort ? shown : (leg.previous ?? null)
   const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
   const track = aisTrail(body.mmsi)
-  const gap = estimate && estimate.track.length > 1 ? estimate.track : []
+  const gap = buildGap(track, received, position, estimate?.track ?? [])
   const forecast = forecastPath(null, position, destination, atPort)
   const narrative = await narrate({
     shipName: body.shipName,
@@ -110,17 +142,18 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     aisDestination,
     aisEta: voyageEta,
   })
+  const dockedStatus = dataDockedStatus()
 
   return {
     position,
     tracking,
-    seenAt: known ? new Date(known.ts).toISOString() : null,
-    seenSource: known ? 'ais' : null,
+    seenAt: aisFix ? new Date(aisFix.ts).toISOString() : null,
+    seenSource: received?.fromDocked ? 'datadocked' : received ? 'ais' : null,
     motion: {
       nav,
-      sogKn: estimate?.sogKn ?? known?.sog ?? null,
-      cog: estimate?.heading ?? known?.cog ?? null,
-      heading: estimate?.heading ?? known?.heading ?? known?.cog ?? null,
+      sogKn: estimate?.sogKn ?? received?.sog ?? null,
+      cog: estimate?.heading ?? received?.cog ?? null,
+      heading: estimate?.heading ?? received?.heading ?? received?.cog ?? null,
     },
     voyage,
     nextPort: {
@@ -147,7 +180,42 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
           actual: actualTs ? new Date(actualTs).toISOString() : null,
         }
       : null,
+    dataDocked: dockedStatus.configured
+      ? {
+          remaining: dockedStatus.credits ?? dockedStatus.remaining,
+          monthlyLimit: dockedStatus.monthlyLimit,
+          seenAt: dockedFix ? new Date(dockedFix.ts).toISOString() : null,
+          source: dockedFix?.source ?? null,
+        }
+      : null,
   }
+}
+
+function pickReceivedFix(ais: LiveFix | null, docked: DockedFix | null): ReceivedFix | null {
+  if (!docked) return ais ? { ...ais, fromDocked: false } : null
+  if (!ais) return { ...docked, fromDocked: true }
+  if (docked.ts > ais.ts + 60_000) return { ...docked, fromDocked: true }
+  if (haversineKm(ais, docked) > 2 && docked.ts + 5 * 60_000 >= ais.ts) return { ...docked, fromDocked: true }
+  return ais.ts >= docked.ts ? { ...ais, fromDocked: false } : { ...docked, fromDocked: true }
+}
+
+function buildGap(
+  track: { lat: number; lng: number }[],
+  received: ReceivedFix | null,
+  position: { lat: number; lng: number },
+  estimateTrack: { lat: number; lng: number }[],
+): { lat: number; lng: number }[] {
+  const trailEnd = track[track.length - 1] ?? null
+  const head = estimateTrack[0] ?? received ?? position
+  const jump =
+    trailEnd && haversineKm(trailEnd, head) > 8
+      ? [{ lat: trailEnd.lat, lng: trailEnd.lng }, { lat: head.lat, lng: head.lng }]
+      : []
+  if (estimateTrack.length > 1) {
+    return jump.length ? [jump[0], ...estimateTrack] : estimateTrack
+  }
+  if (jump.length && haversineKm(head, position) > 1) return [...jump, { lat: position.lat, lng: position.lng }]
+  return jump
 }
 
 function pickBerth(

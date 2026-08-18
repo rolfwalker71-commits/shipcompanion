@@ -97,6 +97,7 @@ export type SnapshotResponse = {
   path: GeoPoint[]
   track: GeoPoint[]
   forecast: GeoPoint[]
+  vesselFinder: { remaining: number; monthlyLimit: number } | null
 }
 
 export type VesselFinderStatus = {

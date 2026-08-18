@@ -180,6 +180,11 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
                 {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
               </Badge>
             ) : null}
+            {snapshot.vesselFinder ? (
+              <Badge className={`${chip} text-muted-foreground`}>
+                {t('vesselRemaining', { count: snapshot.vesselFinder.remaining })}
+              </Badge>
+            ) : null}
           </div>
           <div className="mt-2 flex items-end justify-between gap-3">
             {error ? (

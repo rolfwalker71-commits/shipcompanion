@@ -29,12 +29,13 @@ type Store = {
 }
 
 const HOUR_MS = 60 * 60 * 1000
-const DEFAULT_INTERVAL_HOURS = 5
+const DEFAULT_INTERVAL_HOURS = 3
 const DEFAULT_MONTHLY_LIMIT = 150
 const STATUS_MAX_AGE_MS = 24 * HOUR_MS
 
 let store = readJsonSync<Store>('vesselfinder.json', emptyStore())
 let inflight: Promise<VesselFix | null> | null = null
+let startupFetchPending = true
 
 function apiKey(): string {
   return process.env.VESSELFINDER_API_KEY?.trim() ?? ''
@@ -139,7 +140,7 @@ export function vesselFinderStatus(): VesselFinderStatus {
   }
 }
 
-/** Spend a credit only when coastal AIS is stale and the 5h / monthly budget allows it. */
+/** Spend a credit only when coastal AIS is stale and the 3h / monthly budget allows it. */
 export async function refreshVesselFinderIfNeeded(
   mmsi: string,
   imo: string | undefined,
@@ -149,9 +150,13 @@ export async function refreshVesselFinderIfNeeded(
   rollMonth()
   if (aisFresh) return store.lastFix
   if (remainingCalls() <= 0 || store.credits === 0) return store.lastFix
-  if (store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) return store.lastFix
-  if (store.lastAttemptAt && Date.now() - store.lastAttemptAt < 15 * 60 * 1000) return store.lastFix
+  const startup = startupFetchPending
+  if (!startup && store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) return store.lastFix
+  if (!startup && store.lastAttemptAt && Date.now() - store.lastAttemptAt < 15 * 60 * 1000) {
+    return store.lastFix
+  }
   if (inflight) return inflight
+  startupFetchPending = false
   inflight = fetchVessel(mmsi, imo).finally(() => {
     inflight = null
   })

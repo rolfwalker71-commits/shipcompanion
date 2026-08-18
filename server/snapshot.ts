@@ -7,6 +7,7 @@ import {
   refreshVesselFinderIfNeeded,
   vesselFinderConfigured,
   vesselFinderError,
+  vesselFinderStatus,
 } from './vesselfinder.ts'
 import { fetchWeather } from './weather.ts'
 import { narrate } from './narrate.ts'
@@ -142,6 +143,10 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
           actual: actualTs ? new Date(actualTs).toISOString() : null,
         }
       : null,
+    vesselFinder: (() => {
+      const status = vesselFinderStatus()
+      return status.configured ? { remaining: status.remaining, monthlyLimit: status.monthlyLimit } : null
+    })(),
   }
 }
 

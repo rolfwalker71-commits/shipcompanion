@@ -65,6 +65,7 @@ export type SnapshotResponse = {
   position: GeoPoint & { source: PositionSource }
   tracking: TrackingStatus
   seenAt: string | null
+  seenSource: 'ais' | 'vesselfinder' | null
   zone: string | null
   motion: {
     nav: AisNavState
@@ -96,8 +97,9 @@ export type SnapshotResponse = {
   narrative: string
   path: GeoPoint[]
   track: GeoPoint[]
+  gap: GeoPoint[]
   forecast: GeoPoint[]
-  vesselFinder: { remaining: number; monthlyLimit: number } | null
+  vesselFinder: { remaining: number; monthlyLimit: number; seenAt: string | null } | null
 }
 
 export type VesselFinderStatus = {

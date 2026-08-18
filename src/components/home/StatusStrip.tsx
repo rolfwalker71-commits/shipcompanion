@@ -191,10 +191,17 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
               <p className="min-w-0 text-xs text-muted-foreground" role="status">
                 {t('statusError')}
               </p>
-            ) : snapshot.seenAt ? (
-              <p className="min-w-0 text-xs text-muted-foreground">
-                {t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}
-              </p>
+            ) : snapshot.seenAt || snapshot.vesselFinder?.seenAt ? (
+              <div className="min-w-0 text-xs leading-snug text-muted-foreground">
+                {snapshot.seenAt ? (
+                  <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
+                ) : null}
+                {snapshot.vesselFinder?.seenAt ? (
+                  <p>{t('lastSeenVessel', { time: formatSeen(snapshot.vesselFinder.seenAt, locale, !compact) })}</p>
+                ) : snapshot.vesselFinder ? (
+                  <p>{t('lastSeenVesselNone')}</p>
+                ) : null}
+              </div>
             ) : snapshot.tracking === 'no-key' ? (
               <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>
             ) : snapshot.tracking === 'ais-error' ? (

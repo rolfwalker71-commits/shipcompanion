@@ -99,7 +99,6 @@ function remainingCalls(): number {
 function nextFetchTs(): number | null {
   if (!apiKey()) return null
   if (remainingCalls() <= 0) return nextMonthTs()
-  if (store.credits === 0) return nextMonthTs()
   if (!store.lastFetchAt) return Date.now()
   return store.lastFetchAt + intervalMs()
 }
@@ -149,7 +148,7 @@ export async function refreshVesselFinderIfNeeded(
   if (!apiKey() || !mmsi) return store.lastFix
   rollMonth()
   if (aisFresh) return store.lastFix
-  if (remainingCalls() <= 0 || store.credits === 0) return store.lastFix
+  if (remainingCalls() <= 0) return store.lastFix
   const startup = startupFetchPending
   if (!startup && store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) return store.lastFix
   if (!startup && store.lastAttemptAt && Date.now() - store.lastAttemptAt < 15 * 60 * 1000) {
@@ -172,7 +171,7 @@ async function fetchVessel(mmsi: string, imo?: string): Promise<VesselFix | null
   const url = new URL('https://api.vesselfinder.com/vessels')
   url.searchParams.set('userkey', key)
   url.searchParams.set('mmsi', mmsi)
-  if (imo) url.searchParams.set('imo', imo)
+  if (imo && !mmsi) url.searchParams.set('imo', imo)
   url.searchParams.set('sat', process.env.VESSELFINDER_SATELLITE === '0' ? '0' : '1')
   url.searchParams.set('errormode', '409')
 
@@ -201,7 +200,12 @@ async function fetchVessel(mmsi: string, imo?: string): Promise<VesselFix | null
 
     const fix = parseFix(data[0]?.AIS)
     store.lastError = null
-    if (fix) store.lastFix = fix
+    if (fix) {
+      store.lastFix = fix
+      console.log(
+        `VesselFinder ${fix.source} ${new Date(fix.ts).toISOString()} ${fix.lat.toFixed(3)},${fix.lng.toFixed(3)}`,
+      )
+    }
     persist()
     if (!store.lastStatusAt || Date.now() - store.lastStatusAt > STATUS_MAX_AGE_MS) {
       void refreshStatus()
@@ -276,8 +280,16 @@ function parseFix(ais: Record<string, unknown> | undefined): VesselFix | null {
 }
 
 function parseUtc(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value
+  }
   if (typeof value !== 'string' || !value.trim()) return null
-  const stamp = Date.parse(value.replace(' ', 'T').replace(' UTC', 'Z'))
+  const normalized = value
+    .trim()
+    .replace(/^(\d{4}-\d{2}-\d{2})[ ](\d{2}:\d{2}:\d{2})/, '$1T$2')
+    .replace(/ UTC$/i, 'Z')
+    .replace(/ (?=[+-]\d{2}:?\d{2}$)/, '')
+  const stamp = Date.parse(normalized)
   return Number.isFinite(stamp) ? stamp : null
 }
 

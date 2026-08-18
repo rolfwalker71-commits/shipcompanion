@@ -125,12 +125,13 @@ type ShipMapProps = {
   position: GeoPoint
   path: GeoPoint[]
   track: GeoPoint[]
+  gap?: GeoPoint[]
   forecast: GeoPoint[]
   ports: MapPort[]
   heading?: number | null
 }
 
-export function ShipMap({ position, path, track, forecast, ports, heading = null }: ShipMapProps) {
+export function ShipMap({ position, path, track, gap = [], forecast, ports, heading = null }: ShipMapProps) {
   const { resolved } = useTheme()
   const planColor = resolved === 'dark' ? 'oklch(0.78 0.02 85)' : 'oklch(0.45 0.03 255)'
   const aisColor = resolved === 'dark' ? 'oklch(0.78 0.09 195)' : 'oklch(0.52 0.1 195)'
@@ -194,6 +195,19 @@ export function ShipMap({ position, path, track, forecast, ports, heading = null
         <Polyline
           positions={track.map((point) => [point.lat, point.lng])}
           pathOptions={{ color: aisColor, weight: 4, opacity: 0.92, lineCap: 'round', lineJoin: 'round' }}
+        />
+      ) : null}
+      {gap.length > 1 ? (
+        <Polyline
+          positions={gap.map((point) => [point.lat, point.lng])}
+          pathOptions={{
+            color: aisColor,
+            weight: 3,
+            opacity: 0.55,
+            dashArray: '4 10',
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
         />
       ) : null}
       {forecast.length > 1 ? (

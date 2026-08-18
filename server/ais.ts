@@ -21,6 +21,7 @@ export type VoyageData = {
 
 type Track = {
   fix: LiveFix | null
+  aisFix: LiveFix | null
   voyage: VoyageData | null
   trail: GeoPoint[]
   berthId: string | null
@@ -43,6 +44,7 @@ type CachedTrack = {
   eta?: string | null
   shipName?: string | null
   trail?: GeoPoint[]
+  aisTs?: number
 }
 
 const WORLD_BOX: [[number, number], [number, number]] = [
@@ -115,7 +117,7 @@ function parseAisTime(value: unknown): number {
 }
 
 function emptyTrack(): Track {
-  return { fix: null, voyage: null, trail: [], berthId: null, parked: null, actualDepartures: {} }
+  return { fix: null, aisFix: null, voyage: null, trail: [], berthId: null, parked: null, actualDepartures: {} }
 }
 
 function ensureTrack(mmsi: string): Track {
@@ -151,6 +153,7 @@ async function loadCache(): Promise<void> {
         : []
       tracks.set(mmsi, {
         fix,
+        aisFix: fix && typeof row.aisTs === 'number' ? { ...fix, ts: row.aisTs } : fix,
         voyage:
           row.destination || row.eta || row.shipName
             ? {
@@ -183,6 +186,7 @@ async function saveCache(): Promise<void> {
       eta: track.voyage?.eta ?? null,
       shipName: track.voyage?.name ?? null,
       trail: track.trail,
+      aisTs: track.aisFix?.ts,
     }
   }
   await writeFile(CACHE_FILE, JSON.stringify(payload), 'utf8')
@@ -223,6 +227,7 @@ function rememberPosition(mmsi: string, fix: LiveFix): void {
   tracks.set(mmsi, {
     ...prev,
     fix: merged,
+    aisFix: merged,
     trail: appendTrail(prev.trail, merged, parked),
     berthId,
     parked: parkedPoint,
@@ -401,6 +406,24 @@ export function livePosition(mmsi: string, maxAgeMs = 20 * 60 * 1000): LiveFix |
 
 export function lastKnownPosition(mmsi: string): LiveFix | null {
   return tracks.get(mmsi)?.fix ?? null
+}
+
+export function lastAisPosition(mmsi: string): LiveFix | null {
+  return tracks.get(mmsi)?.aisFix ?? null
+}
+
+/** Apply a VesselFinder (or other) fix as last-known. Large jumps stay off the solid AIS trail. */
+export function rememberExternalFix(mmsi: string, fix: LiveFix): void {
+  const prev = ensureTrack(mmsi)
+  if (prev.fix && fix.ts + 60_000 < prev.fix.ts && haversineKm(prev.fix, fix) < 2) return
+  const last = prev.trail[prev.trail.length - 1] ?? prev.fix
+  const jumpKm = last ? haversineKm(last, fix) : 0
+  tracks.set(mmsi, {
+    ...prev,
+    fix: { ...fix },
+    trail: jumpKm >= 15 ? prev.trail : appendTrail(prev.trail, fix, false),
+  })
+  void saveCache()
 }
 
 export function voyageOf(mmsi: string): VoyageData | null {

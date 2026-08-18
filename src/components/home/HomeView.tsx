@@ -20,6 +20,7 @@ export function HomeView({ trip }: HomeViewProps) {
 
   const path = snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
   const track = snapshot?.track ?? []
+  const gap = snapshot?.gap ?? []
   const forecast = snapshot?.forecast ?? []
 
   const ports = useMemo(() => classifyPorts(trip.stops, locale, snapshot), [locale, snapshot, trip.stops])
@@ -31,6 +32,7 @@ export function HomeView({ trip }: HomeViewProps) {
           position={position}
           path={path}
           track={track}
+          gap={gap}
           forecast={forecast}
           ports={ports}
           heading={live ? snapshot?.motion?.heading ?? null : null}

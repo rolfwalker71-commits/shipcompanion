@@ -1,7 +1,7 @@
 import type { AisNavState, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
 import { estimatedPosition, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
-import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, actualDeparture, voyageOf, aisTrail } from './ais.ts'
+import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail, rememberExternalFix } from './ais.ts'
 import {
   lastVesselFinderFix,
   refreshVesselFinderIfNeeded,
@@ -33,7 +33,19 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     (await refreshVesselFinderIfNeeded(body.mmsi, body.imo, streamLive).catch(() => lastVesselFinderFix())) ??
     lastVesselFinderFix()
 
-  const aisPoint = newerStamp(known, finderFix)
+  if (finderFix) {
+    rememberExternalFix(body.mmsi, {
+      lat: finderFix.lat,
+      lng: finderFix.lng,
+      ts: finderFix.ts,
+      sog: finderFix.sog,
+      cog: finderFix.cog,
+      heading: finderFix.heading,
+      navStatus: finderFix.navStatus,
+    })
+  }
+  const aisPoint = pickReceivedFix(known, finderFix)
+  const usedVesselFinder = Boolean(aisPoint && finderFix && aisPoint === finderFix)
   const aisAge = aisPoint ? now.getTime() - aisPoint.ts : Number.POSITIVE_INFINITY
   const aisLive = Boolean(aisPoint) && aisAge < liveMs
   const guessed = estimatedPosition(body.stops, now, null)
@@ -87,8 +99,12 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const departStop = atPort ? shown : (leg.previous ?? null)
   const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
   const track = aisTrail(body.mmsi)
-  const lastAis = track[track.length - 1] ?? (known ? { lat: known.lat, lng: known.lng } : null)
-  const forecast = forecastPath(lastAis, position, destination, atPort)
+  const trailEnd = track[track.length - 1] ?? (known ? { lat: known.lat, lng: known.lng } : null)
+  const gap =
+    trailEnd && haversineKm(trailEnd, position) > 8
+      ? [{ lat: trailEnd.lat, lng: trailEnd.lng }, { lat: position.lat, lng: position.lng }]
+      : []
+  const forecast = forecastPath(null, position, destination, atPort)
   const narrative = await narrate({
     shipName: body.shipName,
     locale: body.locale,
@@ -109,7 +125,13 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   return {
     position,
     tracking,
-    seenAt: lastStamp ? new Date(lastStamp.ts).toISOString() : null,
+    seenAt: (() => {
+      const ais = lastAisPosition(body.mmsi)
+      if (ais) return new Date(ais.ts).toISOString()
+      if (lastStamp && !usedVesselFinder) return new Date(lastStamp.ts).toISOString()
+      return null
+    })(),
+    seenSource: usedVesselFinder ? 'vesselfinder' : aisPoint ? 'ais' : null,
     zone: finderFix?.zone ?? null,
     motion: motionFix
       ? {
@@ -133,6 +155,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     narrative,
     path: routePath(body.stops),
     track,
+    gap,
     forecast,
     fromPort: !atPort && leg.previous ? loc(leg.previous) : null,
     distanceKm: !atPort ? Math.round(haversineKm(position, destination)) : null,
@@ -145,15 +168,25 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
       : null,
     vesselFinder: (() => {
       const status = vesselFinderStatus()
-      return status.configured ? { remaining: status.remaining, monthlyLimit: status.monthlyLimit } : null
+      if (!status.configured) return null
+      return {
+        remaining: status.remaining,
+        monthlyLimit: status.monthlyLimit,
+        seenAt: finderFix ? new Date(finderFix.ts).toISOString() : null,
+      }
     })(),
   }
 }
 
-function newerStamp<T extends { ts: number }>(a: T | null, b: T | null): T | null {
-  if (!a) return b
-  if (!b) return a
-  return a.ts >= b.ts ? a : b
+function pickReceivedFix<T extends { lat: number; lng: number; ts: number }>(
+  ais: T | null,
+  vessel: T | null,
+): T | null {
+  if (!vessel) return ais
+  if (!ais) return vessel
+  if (vessel.ts > ais.ts + 60_000) return vessel
+  if (haversineKm(ais, vessel) > 2) return vessel
+  return ais.ts >= vessel.ts ? ais : vessel
 }
 
 function pickBerth(

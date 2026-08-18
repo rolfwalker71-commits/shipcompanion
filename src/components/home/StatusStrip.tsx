@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Anchor, ArrowRight, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { SnapshotResponse, WeatherInfo } from '@shared/types.ts'
@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+
+const PAGE_COUNT = 3
 
 type StatusStripProps = {
   snapshot: SnapshotResponse | null
@@ -22,14 +24,32 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const { t } = useTranslation()
   const compact = useCompactUi()
   const scroller = useRef<HTMLDivElement>(null)
+  const pagesRef = useRef<(HTMLElement | null)[]>([])
   const [page, setPage] = useState(0)
+  const [pageHeight, setPageHeight] = useState<number>()
   const when = (iso: string) => formatWhen(iso, locale, !compact)
+
+  useLayoutEffect(() => {
+    const el = pagesRef.current[page]
+    if (!el) return
+    const update = () => setPageHeight(el.offsetHeight)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [page, snapshot, compact, locale, live, estimated, error])
 
   function goTo(next: number) {
     const el = scroller.current
     if (!el) return
     el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
     setPage(next)
+  }
+
+  function bindPage(index: number) {
+    return (node: HTMLElement | null) => {
+      pagesRef.current[index] = node
+    }
   }
 
   if (!snapshot) {
@@ -67,30 +87,63 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
   const reportedPlace = reported ? resolveAisDestination(reported, [], locale) ?? reported : null
   const showReported =
     reportedPlace != null && !samePlace(reportedPlace, here) && !samePlace(reportedPlace, nextName)
+  const aisEta = snapshot.voyage?.eta ?? null
   const showAisEta =
     !atPort &&
-    snapshot.voyage?.eta &&
-    Math.abs(new Date(snapshot.voyage.eta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) >
-      90 * 60 * 1000
-  const courseDeg =
-    snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
+    aisEta != null &&
+    Math.abs(new Date(aisEta).getTime() - new Date(snapshot.nextPort.arriveAt).getTime()) > 90 * 60 * 1000
+  const courseDeg = snapshot.motion?.cog ?? snapshot.motion?.heading ?? null
   const course =
     courseDeg != null && Number.isFinite(courseDeg)
       ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
       : null
 
+  const metrics: Metric[] = []
+  if (speedKmh != null) {
+    metrics.push({
+      icon: <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
+      label: t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }),
+    })
+  } else if (nav === 'underway' || nav === 'restricted') {
+    metrics.push({
+      icon: <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
+      label: t('speedUnknown'),
+      muted: true,
+    })
+  }
+  if (course) {
+    metrics.push({
+      icon: <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
+      label: t('course', { dir: course.dir, deg: course.deg }),
+    })
+  }
+  if (snapshot.distanceKm != null && snapshot.distanceKm > 2) {
+    metrics.push({
+      icon: <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />,
+      label: t('distanceLeft', { km: snapshot.distanceKm }),
+    })
+  } else if (hasNext && atPort) {
+    metrics.push({
+      icon: <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />,
+      label: `${nextName} • ${when(snapshot.nextPort.arriveAt)}`,
+    })
+  }
+
+  const seenLine = seenSummary(snapshot, locale, compact, t)
+
   return (
-    <Card className="pointer-events-auto w-full overflow-visible px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
+    <Card className="pointer-events-auto w-full overflow-visible px-3 py-2 shadow-xl ring-0 sm:px-4 sm:py-3">
       <div
         ref={scroller}
-        className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain"
+        className="no-scrollbar flex items-start snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain transition-[height] duration-200 ease-out"
+        style={pageHeight != null ? { height: pageHeight } : undefined}
         onScroll={(event) => {
           const el = event.currentTarget
           if (!el.clientWidth) return
           setPage(Math.round(el.scrollLeft / el.clientWidth))
         }}
       >
-        <section className="w-full shrink-0 snap-start basis-full" aria-label={t('facts')}>
+        <section ref={bindPage(0)} className="w-full shrink-0 snap-start basis-full" aria-label={t('facts')}>
           <div className="flex items-center gap-2 sm:gap-3">
             <Badge
               className={
@@ -113,95 +166,7 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
                 )}
                 <p className="min-w-0 truncate text-base font-semibold leading-tight sm:text-lg">{here}</p>
               </div>
-              <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {speedKmh != null ? (
-              <InfoTile
-                icon={<Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
-                label={t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
-              />
-            ) : nav === 'underway' || nav === 'restricted' ? (
-              <InfoTile
-                icon={<Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
-                label={t('speedUnknown')}
-                muted
-              />
-            ) : null}
-            {course ? (
-              <InfoTile
-                icon={<Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
-                label={t('course', { dir: course.dir, deg: course.deg })}
-              />
-            ) : null}
-            {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
-              <InfoTile
-                icon={<MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />}
-                label={t('distanceLeft', { km: snapshot.distanceKm })}
-              />
-            ) : null}
-            {hasNext && atPort ? (
-              <InfoTile
-                icon={<ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
-                label={`${nextName} • ${when(snapshot.nextPort.arriveAt)}`}
-              />
-            ) : null}
-            {showReported ? (
-              <InfoTile label={t('reportedDest', { name: reportedPlace ?? '' })} />
-            ) : null}
-            {showAisEta && snapshot.voyage?.eta ? (
-              <InfoTile label={t('aisEta', { time: when(snapshot.voyage.eta) })} muted />
-            ) : null}
-            {snapshot.departure ? (
-              <InfoTile
-                icon={<Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />}
-                label={`${t('departPlanned')} ${when(snapshot.departure.planned)}`}
-                muted
-              />
-            ) : null}
-            {snapshot.departure?.actual ? (
-              <InfoTile
-                icon={<Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />}
-                label={`${t('departActual')} ${when(snapshot.departure.actual)}`}
-              />
-            ) : snapshot.departure ? (
-              <InfoTile
-                icon={<Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />}
-                label={`${t('departActual')} ${atPort ? t('departPending') : t('departUnknown')}`}
-                muted
-              />
-            ) : null}
-            {snapshot.dataDocked ? (
-              <InfoTile label={t('dockedRemaining', { count: snapshot.dataDocked.remaining })} muted />
-            ) : null}
-          </div>
-          <div className="mt-2 flex items-end justify-between gap-3">
-            <div className="min-w-0 text-xs leading-snug text-muted-foreground">
-              {error ? <p role="status">{t('statusError')}</p> : null}
-              {snapshot.seenAt || snapshot.dataDocked?.seenAt ? (
-                <>
-                  {snapshot.seenAt ? (
-                    <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
-                  ) : null}
-                  {snapshot.dataDocked?.seenAt ? (
-                    <p>
-                      {t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
-                        time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
-                      })}
-                    </p>
-                  ) : snapshot.dataDocked ? (
-                    <p>{t('lastSeenDockedNone')}</p>
-                  ) : null}
-                  {snapshot.tracking === 'estimated' ? <p>{t('approxEstimate')}</p> : null}
-                </>
-              ) : snapshot.tracking === 'no-key' ? (
-                <p>{t('approxNoKey')}</p>
-              ) : snapshot.tracking === 'ais-error' ? (
-                <p>{t('approxAisError')}</p>
-              ) : snapshot.tracking === 'estimated' ? (
-                <p>{t('approxEstimate')}</p>
-              ) : null}
+              <p className="mt-0.5 truncate text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
             </div>
             {snapshot.weather ? (
               <div
@@ -213,56 +178,173 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
               </div>
             ) : null}
           </div>
+          <MetricRow items={metrics} />
+          <div className="mt-1.5 min-w-0 text-xs leading-snug text-muted-foreground">
+            {error ? <p role="status">{t('statusError')}</p> : null}
+            {seenLine ? <p className="truncate">{seenLine}</p> : null}
+          </div>
         </section>
-        <section className="flex w-full shrink-0 snap-start basis-full flex-col justify-center pr-1" aria-label={t('story')}>
+        <section
+          ref={bindPage(1)}
+          className="flex w-full shrink-0 snap-start basis-full flex-col justify-center pr-1"
+          aria-label={t('story')}
+        >
           <p className="text-base leading-relaxed sm:text-lg">{snapshot.narrative || t('narrativeEmpty')}</p>
+        </section>
+        <section ref={bindPage(2)} className="w-full shrink-0 snap-start basis-full pr-1" aria-label={t('details')}>
+          <div className="flex flex-col gap-1.5">
+            {hasNext && atPort ? (
+              <DetailLine icon={<ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />}>
+                {nextName} • {when(snapshot.nextPort.arriveAt)}
+              </DetailLine>
+            ) : null}
+            {showReported ? (
+              <DetailLine>{t('reportedDest', { name: reportedPlace ?? '' })}</DetailLine>
+            ) : null}
+            {showAisEta && aisEta ? (
+              <DetailLine muted>{t('aisEta', { time: when(aisEta) })}</DetailLine>
+            ) : null}
+            {snapshot.departure ? (
+              <DetailLine icon={<Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />} muted>
+                {`${t('departPlanned')} ${when(snapshot.departure.planned)}`}
+              </DetailLine>
+            ) : null}
+            {snapshot.departure?.actual ? (
+              <DetailLine icon={<Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />}>
+                {`${t('departActual')} ${when(snapshot.departure.actual)}`}
+              </DetailLine>
+            ) : snapshot.departure ? (
+              <DetailLine icon={<Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />} muted>
+                {`${t('departActual')} ${atPort ? t('departPending') : t('departUnknown')}`}
+              </DetailLine>
+            ) : null}
+            {snapshot.seenAt ? (
+              <DetailLine>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</DetailLine>
+            ) : null}
+            {snapshot.dataDocked?.seenAt ? (
+              <DetailLine>
+                {t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
+                  time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
+                })}
+              </DetailLine>
+            ) : snapshot.dataDocked ? (
+              <DetailLine muted>{t('lastSeenDockedNone')}</DetailLine>
+            ) : null}
+            {snapshot.dataDocked ? (
+              <DetailLine muted>{t('dockedRemaining', { count: snapshot.dataDocked.remaining })}</DetailLine>
+            ) : null}
+            {snapshot.tracking === 'no-key' ? (
+              <DetailLine muted>{t('approxNoKey')}</DetailLine>
+            ) : snapshot.tracking === 'ais-error' ? (
+              <DetailLine muted>{t('approxAisError')}</DetailLine>
+            ) : snapshot.tracking === 'estimated' ? (
+              <DetailLine muted>{t('approxEstimate')}</DetailLine>
+            ) : null}
+            {!hasExtraDetails(snapshot, hasNext && atPort, showReported, showAisEta) ? (
+              <p className="text-sm text-muted-foreground">{t('detailsEmpty')}</p>
+            ) : null}
+          </div>
         </section>
       </div>
       <div className="flex justify-center" role="tablist" aria-label={t('statusPages')}>
-        <Button
-          variant="ghost"
-          size="icon"
-          role="tab"
-          aria-label={t('facts')}
-          aria-selected={page === 0}
-          onClick={() => goTo(0)}
-        >
-          <span className={cn('size-2 rounded-full', page === 0 ? 'bg-foreground' : 'bg-muted-foreground/40')} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          role="tab"
-          aria-label={t('story')}
-          aria-selected={page === 1}
-          onClick={() => goTo(1)}
-        >
-          <span className={cn('size-2 rounded-full', page === 1 ? 'bg-foreground' : 'bg-muted-foreground/40')} />
-        </Button>
+        {Array.from({ length: PAGE_COUNT }, (_, index) => (
+          <Button
+            key={index}
+            variant="ghost"
+            size="icon"
+            role="tab"
+            aria-label={index === 0 ? t('facts') : index === 1 ? t('story') : t('details')}
+            aria-selected={page === index}
+            onClick={() => goTo(index)}
+          >
+            <span className={cn('size-2 rounded-full', page === index ? 'bg-foreground' : 'bg-muted-foreground/40')} />
+          </Button>
+        ))}
       </div>
     </Card>
   )
 }
 
-function InfoTile({
+type Metric = {
+  icon: React.ReactNode
+  label: string
+  muted?: boolean
+}
+
+function MetricRow({ items }: { items: Metric[] }) {
+  if (!items.length) return null
+  return (
+    <div className="mt-2 flex divide-x divide-border/60 rounded-xl bg-muted/70">
+      {items.map((item) => (
+        <div key={item.label} className="flex min-w-0 flex-1 items-center justify-center gap-1.5 px-2 py-1.5">
+          <span className="shrink-0">{item.icon}</span>
+          <span
+            className={cn(
+              'truncate text-xs font-medium sm:text-sm',
+              item.muted ? 'text-muted-foreground' : 'text-foreground',
+            )}
+          >
+            {item.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function DetailLine({
   icon,
-  label,
+  children,
   muted = false,
 }: {
   icon?: React.ReactNode
-  label: string
+  children: React.ReactNode
   muted?: boolean
 }) {
   return (
-    <div
-      className={cn(
-        'flex min-h-11 items-center gap-2 rounded-2xl bg-muted/70 px-3 py-2 text-sm leading-snug',
-        muted ? 'text-muted-foreground' : 'text-foreground',
-      )}
-    >
-      {icon ? <span className="shrink-0">{icon}</span> : null}
-      <span className="min-w-0 break-words">{label}</span>
-    </div>
+    <p className={cn('flex items-start gap-2 text-sm leading-snug', muted ? 'text-muted-foreground' : 'text-foreground')}>
+      {icon ? <span className="mt-0.5 shrink-0">{icon}</span> : null}
+      <span className="min-w-0 break-words">{children}</span>
+    </p>
+  )
+}
+
+function seenSummary(
+  snapshot: SnapshotResponse,
+  locale: 'de' | 'en',
+  compact: boolean,
+  t: (key: string, opts?: Record<string, string>) => string,
+): string | null {
+  const bits: string[] = []
+  if (snapshot.seenAt) bits.push(t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) }))
+  if (snapshot.dataDocked?.seenAt) {
+    bits.push(
+      t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
+        time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
+      }),
+    )
+  } else if (snapshot.dataDocked) {
+    bits.push(t('lastSeenDockedNone'))
+  }
+  return bits.length ? bits.join(' · ') : null
+}
+
+function hasExtraDetails(
+  snapshot: SnapshotResponse,
+  nextAtPort: boolean,
+  showReported: boolean,
+  showAisEta: boolean,
+): boolean {
+  return Boolean(
+    nextAtPort ||
+      showReported ||
+      showAisEta ||
+      snapshot.departure ||
+      snapshot.seenAt ||
+      snapshot.dataDocked ||
+      snapshot.tracking === 'no-key' ||
+      snapshot.tracking === 'ais-error' ||
+      snapshot.tracking === 'estimated',
   )
 }
 

@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowDown, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, Ship, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { CruiseShip, PortStop, SnapshotResponse, WeatherInfo } from '@shared/types.ts'
-import { formatArrivalParts } from '@shared/time.ts'
+import { DISPLAY_TZ, formatArrivalParts, formatClock, formatSeen } from '@shared/time.ts'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -94,6 +94,25 @@ export function StatusStrip({
   const pocName = here
   const departure = fromName && snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale) : null
   const arrival = formatArrivalParts(snapshot.nextPort.arriveAt, locale)
+  const sourceLabel =
+    snapshot.seenSource === 'ais'
+      ? t('signalAis')
+      : snapshot.seenSource === 'datadocked'
+        ? t('sourceDd')
+        : snapshot.dataDocked?.seenAt
+          ? t('sourceDd')
+          : null
+  const sourceAria =
+    snapshot.seenSource === 'ais'
+      ? t('signalAis')
+      : snapshot.seenSource === 'datadocked' || snapshot.dataDocked?.seenAt
+        ? t('sourceDdFull')
+        : null
+  const seenIso = snapshot.seenAt ?? snapshot.dataDocked?.seenAt ?? null
+  const seenTime = seenIso ? formatClock(new Date(seenIso), locale, DISPLAY_TZ) : null
+  const liveMeta = [sourceAria, seenTime ? t('lastUpdateAria', { time: seenTime }) : null]
+    .filter(Boolean)
+    .join(', ')
 
   return (
     <Card className="pointer-events-auto w-full overflow-visible px-3 py-2 shadow-xl ring-0 sm:px-4 sm:py-3">
@@ -109,18 +128,31 @@ export function StatusStrip({
       >
         <section ref={bindPage(0)} className="w-full shrink-0 snap-start basis-full" aria-label={t('facts')}>
           <div className="flex min-w-0 items-start gap-2 sm:gap-3">
-            <Badge
-              className={
-                live
-                  ? 'shrink-0 gap-1.5 bg-accent px-2 py-0.5 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
-                  : estimated
-                    ? 'shrink-0 gap-1.5 bg-primary/10 px-2 py-0.5 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
-                    : 'shrink-0 px-2 py-0.5 text-xs sm:px-3 sm:py-1 sm:text-sm'
-              }
-            >
-              {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
-              {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
-            </Badge>
+            <div className="flex shrink-0 flex-col items-start gap-0.5" aria-label={liveMeta || undefined}>
+              <Badge
+                className={
+                  live
+                    ? 'gap-1.5 bg-accent px-2 py-0.5 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
+                    : estimated
+                      ? 'gap-1.5 bg-primary/10 px-2 py-0.5 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
+                      : 'px-2 py-0.5 text-xs sm:px-3 sm:py-1 sm:text-sm'
+                }
+              >
+                {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
+                {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
+              </Badge>
+              {sourceLabel ? (
+                <p className="pl-0.5 text-[10px] font-medium leading-none text-muted-foreground">{sourceLabel}</p>
+              ) : null}
+              {seenTime ? (
+                <p
+                  className="pl-0.5 tabular-nums text-[10px] leading-none text-muted-foreground"
+                  title={seenIso ? formatSeen(seenIso, locale) : undefined}
+                >
+                  {seenTime}
+                </p>
+              ) : null}
+            </div>
             <div
               className="min-w-0 flex-1"
               aria-label={fromName ? `${fromName} → ${pocName}` : pocName}

@@ -54,8 +54,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
       : false
   const fromBit = !atPort && snapshot.fromPort ? ` ${t('fromPort', { name: snapshot.fromPort })}` : ''
   const speedKmh = formatSpeedKmh(snapshot.motion?.sogKn)
-  const speedText =
-    speedKmh != null ? t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) }) : t('speedUnknown')
   const subtitle = atPort
     ? nav === 'anchored'
       ? t('navAnchored')
@@ -63,8 +61,8 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         ? t('stillBerth')
         : t('navMoored')
     : nav === 'underway' || nav === 'restricted'
-      ? `${t('navUnderway')} · ${speedText}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
-      : `${speedText} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
+      ? `${t('navUnderway')}${fromBit} · ${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
+      : `${t('arrival')} ${when(snapshot.nextPort.arriveAt)}`
   const reported = snapshot.voyage?.destination?.trim() || null
   const reportedPlace = reported ? resolveAisDestination(reported, [], locale) ?? reported : null
   const showReported =
@@ -80,9 +78,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
     courseDeg != null && Number.isFinite(courseDeg)
       ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
       : null
-
-  const chip =
-    'shrink-0 gap-1.5 overflow-visible whitespace-nowrap px-2.5 py-1 text-xs text-foreground sm:px-3 sm:text-sm'
 
   return (
     <Card className="pointer-events-auto w-full overflow-visible px-3 py-2.5 shadow-xl ring-0 sm:px-4 sm:py-3">
@@ -121,65 +116,64 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
               <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground sm:text-sm">{subtitle}</p>
             </div>
           </div>
-          <div className="mt-2 flex flex-wrap content-start items-center gap-1.5 sm:gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {speedKmh != null ? (
-              <Badge className={chip}>
-                <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                {t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
-              </Badge>
+              <InfoTile
+                icon={<Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
+                label={t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
+              />
             ) : nav === 'underway' || nav === 'restricted' ? (
-              <Badge className={`${chip} text-muted-foreground`}>
-                <Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                {t('speedUnknown')}
-              </Badge>
+              <InfoTile
+                icon={<Gauge className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
+                label={t('speedUnknown')}
+                muted
+              />
             ) : null}
             {course ? (
-              <Badge className={chip}>
-                <Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                {t('course', { dir: course.dir, deg: course.deg })}
-              </Badge>
+              <InfoTile
+                icon={<Compass className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
+                label={t('course', { dir: course.dir, deg: course.deg })}
+              />
             ) : null}
             {snapshot.distanceKm != null && snapshot.distanceKm > 2 ? (
-              <Badge className={chip}>
-                <MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />
-                {t('distanceLeft', { km: snapshot.distanceKm })}
-              </Badge>
+              <InfoTile
+                icon={<MapPinned className="h-3.5 w-3.5 text-teal-600" aria-hidden />}
+                label={t('distanceLeft', { km: snapshot.distanceKm })}
+              />
             ) : null}
             {hasNext && atPort ? (
-              <Badge className={chip}>
-                <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                {nextName} • {when(snapshot.nextPort.arriveAt)}
-              </Badge>
+              <InfoTile
+                icon={<ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />}
+                label={`${nextName} • ${when(snapshot.nextPort.arriveAt)}`}
+              />
             ) : null}
             {showReported ? (
-              <Badge className={chip}>{t('reportedDest', { name: reportedPlace ?? '' })}</Badge>
+              <InfoTile label={t('reportedDest', { name: reportedPlace ?? '' })} />
             ) : null}
             {showAisEta && snapshot.voyage?.eta ? (
-              <Badge className={`${chip} text-muted-foreground`}>
-                {t('aisEta', { time: when(snapshot.voyage.eta) })}
-              </Badge>
+              <InfoTile label={t('aisEta', { time: when(snapshot.voyage.eta) })} muted />
             ) : null}
             {snapshot.departure ? (
-              <Badge className={`${chip} text-muted-foreground`}>
-                <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
-                {t('departPlanned')} {when(snapshot.departure.planned)}
-              </Badge>
+              <InfoTile
+                icon={<Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />}
+                label={`${t('departPlanned')} ${when(snapshot.departure.planned)}`}
+                muted
+              />
             ) : null}
             {snapshot.departure?.actual ? (
-              <Badge className={chip}>
-                <Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />
-                {t('departActual')} {when(snapshot.departure.actual)}
-              </Badge>
+              <InfoTile
+                icon={<Ship className="h-3.5 w-3.5 fill-emerald-100 text-emerald-600" aria-hidden />}
+                label={`${t('departActual')} ${when(snapshot.departure.actual)}`}
+              />
             ) : snapshot.departure ? (
-              <Badge className={`${chip} text-muted-foreground`}>
-                <Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />
-                {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
-              </Badge>
+              <InfoTile
+                icon={<Ship className="h-3.5 w-3.5 fill-orange-100 text-orange-500" aria-hidden />}
+                label={`${t('departActual')} ${atPort ? t('departPending') : t('departUnknown')}`}
+                muted
+              />
             ) : null}
             {snapshot.dataDocked ? (
-              <Badge className={`${chip} text-muted-foreground`}>
-                {t('dockedRemaining', { count: snapshot.dataDocked.remaining })}
-              </Badge>
+              <InfoTile label={t('dockedRemaining', { count: snapshot.dataDocked.remaining })} muted />
             ) : null}
           </div>
           <div className="mt-2 flex items-end justify-between gap-3">
@@ -247,6 +241,28 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
         </Button>
       </div>
     </Card>
+  )
+}
+
+function InfoTile({
+  icon,
+  label,
+  muted = false,
+}: {
+  icon?: React.ReactNode
+  label: string
+  muted?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex min-h-11 items-center gap-2 rounded-2xl bg-muted/70 px-3 py-2 text-sm leading-snug',
+        muted ? 'text-muted-foreground' : 'text-foreground',
+      )}
+    >
+      {icon ? <span className="shrink-0">{icon}</span> : null}
+      <span className="min-w-0 break-words">{label}</span>
+    </div>
   )
 }
 

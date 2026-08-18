@@ -137,13 +137,13 @@ export function StatusStrip({ snapshot, error, locale, live, estimated, shipName
                   />
                 </>
               ) : null}
-              <p className="flex min-w-0 items-baseline gap-3 text-base font-semibold leading-tight sm:text-lg">
+              <p className="flex min-w-0 items-center gap-4 text-base font-semibold leading-tight sm:text-lg">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <MapPinned className="h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
                   <span className="min-w-0 truncate">{pocName}</span>
                 </span>
                 {arrival ? (
-                  <span className="ml-auto mr-3 shrink-0 pl-2 text-right text-xs font-medium leading-tight text-muted-foreground sm:mr-5 sm:text-sm">
+                  <span className="shrink-0 text-xs font-medium leading-tight text-muted-foreground sm:text-sm">
                     {t('arrival')} {arrival.day}{' '}
                     <span className="font-semibold tabular-nums text-foreground">
                       {arrival.time} {arrival.offset}

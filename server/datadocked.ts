@@ -162,7 +162,10 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
   url.searchParams.set('imo_or_mmsi', mmsi)
 
   try {
-    const response = await fetch(url, { headers: { 'x-api-key': key } })
+    const response = await fetch(url, {
+      headers: { 'x-api-key': key },
+      signal: AbortSignal.timeout(8_000),
+    })
     store.lastAttemptAt = Date.now()
     store.lastMmsi = mmsi
 
@@ -206,7 +209,10 @@ async function refreshCredits(): Promise<void> {
   const key = apiKey()
   if (!key) return
   try {
-    const response = await fetch(`${BASE}/my-credits`, { headers: { 'x-api-key': key } })
+    const response = await fetch(`${BASE}/my-credits`, {
+      headers: { 'x-api-key': key },
+      signal: AbortSignal.timeout(8_000),
+    })
     store.lastStatusAt = Date.now()
     if (!response.ok) {
       persist()

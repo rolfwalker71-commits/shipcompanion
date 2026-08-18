@@ -93,6 +93,7 @@ export async function llmNarrative(input: NarrateInput): Promise<string | null> 
       Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(4_000),
     body: JSON.stringify({
       model,
       temperature: 0.2,

@@ -175,10 +175,15 @@ app.post('/api/push/unsubscribe', async (c) => {
 })
 
 app.post('/api/snapshot', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as SnapshotRequest | null
-  const payload = await buildSnapshot(body as SnapshotRequest)
-  if ('error' in payload) return c.json({ error: payload.error }, payload.status)
-  return c.json(payload)
+  try {
+    const body = (await c.req.json().catch(() => null)) as SnapshotRequest | null
+    const payload = await buildSnapshot(body as SnapshotRequest)
+    if ('error' in payload) return c.json({ error: payload.error }, payload.status)
+    return c.json(payload)
+  } catch (error) {
+    console.warn('snapshot failed:', error instanceof Error ? error.message : error)
+    return c.json({ error: 'snapshot_failed' }, 500)
+  }
 })
 
 if (isProd && existsSync('dist/index.html')) {

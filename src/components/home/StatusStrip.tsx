@@ -183,33 +183,32 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
             ) : null}
           </div>
           <div className="mt-2 flex items-end justify-between gap-3">
-            {error ? (
-              <p className="min-w-0 text-xs text-muted-foreground" role="status">
-                {t('statusError')}
-              </p>
-            ) : snapshot.seenAt || snapshot.dataDocked?.seenAt ? (
-              <div className="min-w-0 text-xs leading-snug text-muted-foreground">
-                {snapshot.seenAt ? (
-                  <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
-                ) : null}
-                {snapshot.dataDocked?.seenAt ? (
-                  <p>
-                    {t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
-                      time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
-                    })}
-                  </p>
-                ) : snapshot.dataDocked ? (
-                  <p>{t('lastSeenDockedNone')}</p>
-                ) : null}
-                {snapshot.tracking === 'estimated' ? <p>{t('approxEstimate')}</p> : null}
-              </div>
-            ) : snapshot.tracking === 'no-key' ? (
-              <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>
-            ) : snapshot.tracking === 'ais-error' ? (
-              <p className="min-w-0 text-xs text-muted-foreground">{t('approxAisError')}</p>
-            ) : (
-              <span />
-            )}
+            <div className="min-w-0 text-xs leading-snug text-muted-foreground">
+              {error ? <p role="status">{t('statusError')}</p> : null}
+              {snapshot.seenAt || snapshot.dataDocked?.seenAt ? (
+                <>
+                  {snapshot.seenAt ? (
+                    <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
+                  ) : null}
+                  {snapshot.dataDocked?.seenAt ? (
+                    <p>
+                      {t(snapshot.dataDocked.source === 'SAT' ? 'lastSeenDockedSat' : 'lastSeenDocked', {
+                        time: formatSeen(snapshot.dataDocked.seenAt, locale, !compact),
+                      })}
+                    </p>
+                  ) : snapshot.dataDocked ? (
+                    <p>{t('lastSeenDockedNone')}</p>
+                  ) : null}
+                  {snapshot.tracking === 'estimated' ? <p>{t('approxEstimate')}</p> : null}
+                </>
+              ) : snapshot.tracking === 'no-key' ? (
+                <p>{t('approxNoKey')}</p>
+              ) : snapshot.tracking === 'ais-error' ? (
+                <p>{t('approxAisError')}</p>
+              ) : snapshot.tracking === 'estimated' ? (
+                <p>{t('approxEstimate')}</p>
+              ) : null}
+            </div>
             {snapshot.weather ? (
               <div
                 className="flex shrink-0 flex-col items-center gap-0.5"

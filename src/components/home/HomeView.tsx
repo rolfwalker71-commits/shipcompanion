@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { SnapshotResponse, Trip, PortStop } from '@shared/types.ts'
+import { estimatedPosition } from '@shared/geo.ts'
 import { formatMapWhen } from '@shared/time.ts'
 import { useSnapshot } from '@/lib/use-snapshot'
 import { ShipMap, type MapPort } from './ShipMap'
@@ -14,6 +15,8 @@ export function HomeView({ trip }: HomeViewProps) {
 
   const position = useMemo(() => {
     if (snapshot?.position) return snapshot.position
+    const guessed = estimatedPosition(trip.stops)
+    if (guessed) return guessed.point
     const stop = trip.stops[0]
     return stop ? { lat: stop.lat, lng: stop.lng } : { lat: 41.9, lng: 5.2 }
   }, [snapshot?.position, trip.stops])

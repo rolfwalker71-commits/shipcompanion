@@ -122,6 +122,8 @@ export type DataDockedStatus = {
   nextFetchAt: string | null
   lastError: string | null
   lastSource: 'TER' | 'SAT' | null
+  intervalHours: number
+  pinConfigured: boolean
 }
 
 export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back'

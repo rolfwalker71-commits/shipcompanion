@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { SnapshotRequest } from '../shared/types.ts'
 import { aisConfigured, aisError } from './ais.ts'
-import { dataDockedStatus } from './datadocked.ts'
+import { dataDockedStatus, setIntervalHours, settingsPinConfigured } from './datadocked.ts'
 import {
   COOKIE_NAME,
   allowLoginAttempt,
@@ -135,6 +135,25 @@ app.get('/api/status', (c) => {
     llmConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
     aisError: aisError(),
   })
+})
+
+app.post('/api/datadocked/interval', async (c) => {
+  const ip = `pin:${clientIp(c.req.raw.headers)}`
+  if (!allowLoginAttempt(ip)) {
+    return c.json({ error: 'too_many_attempts' }, 429)
+  }
+  if (!settingsPinConfigured()) {
+    return c.json({ error: 'pin_not_set' }, 503)
+  }
+  const body = (await c.req.json().catch(() => null)) as { pin?: string; hours?: number } | null
+  const hours = Number(body?.hours)
+  if (!keysMatch(String(body?.pin ?? ''), process.env.SETTINGS_PIN ?? '')) {
+    recordFailedLogin(ip)
+    return c.json({ error: 'invalid_pin' }, 401)
+  }
+  clearLoginAttempts(ip)
+  if (!setIntervalHours(hours)) return c.json({ error: 'invalid_interval' }, 400)
+  return c.json({ dataDocked: dataDockedStatus() })
 })
 
 app.get('/api/trip', (c) => {

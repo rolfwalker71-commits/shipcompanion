@@ -24,6 +24,7 @@ type Store = {
   lastError: string | null
   lastMmsi: string | null
   lastFix: DockedFix | null
+  intervalHours: number | null
 }
 
 const BASE = 'https://datadocked.com/api/vessels_operations'
@@ -44,10 +45,21 @@ function monthlyLimit(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MONTHLY_LIMIT
 }
 
-function intervalMs(): number {
+const ALLOWED_INTERVALS = [1, 3] as const
+
+function envIntervalHours(): number {
   const raw = Number(process.env.DATADOCKED_MIN_INTERVAL_HOURS ?? DEFAULT_INTERVAL_HOURS)
-  const hours = Number.isFinite(raw) && raw >= 1 ? raw : DEFAULT_INTERVAL_HOURS
-  return hours * HOUR_MS
+  return Number.isFinite(raw) && raw >= 1 ? Math.min(24, Math.floor(raw)) : DEFAULT_INTERVAL_HOURS
+}
+
+export function intervalHours(): number {
+  const override = store.intervalHours
+  if (override === 1 || override === 3) return override
+  return envIntervalHours()
+}
+
+function intervalMs(): number {
+  return intervalHours() * HOUR_MS
 }
 
 function billingMonth(now = new Date()): string {
@@ -69,6 +81,7 @@ function emptyStore(): Store {
     lastError: null,
     lastMmsi: null,
     lastFix: null,
+    intervalHours: null,
   }
 }
 
@@ -81,6 +94,7 @@ function rollMonth(): void {
     credits: store.credits,
     lastFix: store.lastFix,
     lastMmsi: store.lastMmsi,
+    intervalHours: store.intervalHours,
   }
 }
 
@@ -132,7 +146,20 @@ export function dataDockedStatus(): DataDockedStatus {
     nextFetchAt: next ? new Date(next).toISOString() : null,
     lastError: store.lastError,
     lastSource: store.lastFix?.source ?? null,
+    intervalHours: intervalHours(),
+    pinConfigured: settingsPinConfigured(),
   }
+}
+
+export function settingsPinConfigured(): boolean {
+  return Boolean(process.env.SETTINGS_PIN?.trim())
+}
+
+export function setIntervalHours(hours: number): boolean {
+  if (!(ALLOWED_INTERVALS as readonly number[]).includes(hours)) return false
+  store.intervalHours = hours
+  persist()
+  return true
 }
 
 function apiHeaders(): { accept: string; 'x-api-key': string } {

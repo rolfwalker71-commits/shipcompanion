@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -30,6 +31,10 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
   const [lang, setLang] = useState(i18n.language.startsWith('de') ? 'de' : 'en')
   const [trackerOn, setTrackerOn] = useState(false)
   const [dataDocked, setDataDocked] = useState<DataDockedStatus | null>(null)
+  const [intervalHours, setIntervalHours] = useState('3')
+  const [intervalPin, setIntervalPin] = useState('')
+  const [intervalBusy, setIntervalBusy] = useState(false)
+  const [intervalMsg, setIntervalMsg] = useState<'ok' | 'bad' | 'missing' | 'busy' | null>(null)
   const [push, setPush] = useState<'unsupported' | 'denied' | 'off' | 'on'>('off')
   const [pushBusy, setPushBusy] = useState(false)
 
@@ -44,6 +49,11 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
       .then((data: { aisConfigured?: boolean; dataDocked?: DataDockedStatus } | null) => {
         setTrackerOn(Boolean(data?.aisConfigured))
         setDataDocked(data?.dataDocked ?? null)
+        if (data?.dataDocked?.intervalHours) {
+          setIntervalHours(String(data.dataDocked.intervalHours === 1 ? 1 : 3))
+        }
+        setIntervalPin('')
+        setIntervalMsg(null)
       })
       .catch(() => {
         setTrackerOn(false)
@@ -67,7 +77,38 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
       return `${credits} ${t('trackingDockedError', { error: dataDocked.lastError })}`
     }
     const when = dataDocked.nextFetchAt ? formatWhen(dataDocked.nextFetchAt, locale) : t('trackingDockedSoon')
-    return `${credits} ${t('trackingDockedNext', { when })}`
+    return `${credits} ${t('trackingDockedInterval', { hours: dataDocked.intervalHours })} ${t('trackingDockedNext', { when })}`
+  }
+
+  function saveInterval() {
+    setIntervalBusy(true)
+    setIntervalMsg(null)
+    void fetch('/api/datadocked/interval', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: intervalPin, hours: Number(intervalHours) }),
+    })
+      .then(async (res) => {
+        if (res.status === 429) {
+          setIntervalMsg('busy')
+          return
+        }
+        if (res.status === 503) {
+          setIntervalMsg('missing')
+          return
+        }
+        if (!res.ok) {
+          setIntervalMsg('bad')
+          return
+        }
+        const data = (await res.json()) as { dataDocked?: DataDockedStatus }
+        if (data.dataDocked) setDataDocked(data.dataDocked)
+        setIntervalPin('')
+        setIntervalMsg('ok')
+      })
+      .catch(() => setIntervalMsg('bad'))
+      .finally(() => setIntervalBusy(false))
   }
 
   return (
@@ -84,6 +125,55 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
             </p>
             <p className="text-sm leading-relaxed text-muted-foreground">{dataDockedLine()}</p>
           </div>
+          {dataDocked?.configured ? (
+            <div className="space-y-2">
+              <Label htmlFor="docked-interval">{t('dockedInterval')}</Label>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t('dockedIntervalHint')}</p>
+              <Select value={intervalHours} onValueChange={setIntervalHours} disabled={intervalBusy}>
+                <SelectTrigger id="docked-interval" aria-label={t('dockedInterval')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="3">{t('dockedInterval3')}</SelectItem>
+                  <SelectItem value="1">{t('dockedInterval1')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Label htmlFor="docked-pin">{t('dockedIntervalPin')}</Label>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t('dockedIntervalPinHint')}</p>
+              <Input
+                id="docked-pin"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={12}
+                value={intervalPin}
+                onChange={(event) => setIntervalPin(event.target.value)}
+                aria-label={t('dockedIntervalPin')}
+              />
+              <Button
+                variant="secondary"
+                className="w-full"
+                disabled={intervalBusy || !intervalPin.trim()}
+                onClick={saveInterval}
+              >
+                {t('dockedIntervalSave')}
+              </Button>
+              {intervalMsg === 'ok' ? (
+                <p className="text-sm text-foreground" role="status">
+                  {t('dockedIntervalSaved')}
+                </p>
+              ) : null}
+              {intervalMsg && intervalMsg !== 'ok' ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {intervalMsg === 'missing'
+                    ? t('dockedIntervalPinMissing')
+                    : intervalMsg === 'busy'
+                      ? t('dockedIntervalBusy')
+                      : t('dockedIntervalPinBad')}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 space-y-1">
               <Label htmlFor="push-toggle">{t('pushEnable')}</Label>

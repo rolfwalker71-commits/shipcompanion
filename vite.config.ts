@@ -87,7 +87,9 @@ export default defineConfig(({ mode }) => {
         ],
       },
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // Keep HTML out of precache — navigation already uses NetworkOnly in sw.ts.
+        // Precached index.html caused installed PWAs to keep stale script hashes after deploy.
+        globPatterns: ['**/*.{js,css,svg,png,woff2}'],
       },
     }),
   ],

@@ -13,7 +13,7 @@ npm run dev
 
 Open [http://localhost:3344](http://localhost:3344). Default local key in `.env` is `family`.
 
-Tracking one ship is **free** via [aisstream.io](https://aisstream.io/) (`AISSTREAM_API_KEY`). The app stores the last coastal position. Mid-ocean there is no free satellite AIS — VesselFinder's website uses paid satellite data (~330 EUR API packs). That is optional, not required.
+Tracking one ship is **free** via [aisstream.io](https://aisstream.io/) (`AISSTREAM_API_KEY`). The app stores the last coastal AIS position and interpolates while the radio is quiet. Mid-ocean there is no free satellite AIS.
 
 Schiff und Reederei: Zahnrad → **Schiff und Route ändern**. Erst Reederei, dann Schiff. Fehlt ein Schiff: **Anderes Schiff (MMSI)**.
 
@@ -32,10 +32,6 @@ Port **3344**. Keys stay in `.env` on the server, never in the browser bundle.
 | `APP_ACCESS_KEY` | Family login (required) |
 | `AISSTREAM_API_KEY` | Free live AIS for one ship; last position is cached |
 | `OPENAI_API_KEY` | Spoken status sentence; template if empty |
-| `VESSELFINDER_API_KEY` | Optional paid AIS when coastal AIS is quiet (default: max 150/month, every 3h) |
-| `VESSELFINDER_MONTHLY_LIMIT` | Monthly request cap (default 150) |
-| `VESSELFINDER_MIN_INTERVAL_HOURS` | Minimum hours between paid requests (default 3) |
-| `VESSELFINDER_SATELLITE` | `1` (default) includes satellite positions when newer |
 | `COOKIE_SECURE` | `true` erzwingt Secure-Cookies. Hinter HTTPS sonst über `X-Forwarded-Proto`, immer `SameSite=Lax`. |
 | `PORT` | HTTP port (default 3344 in production) |
 

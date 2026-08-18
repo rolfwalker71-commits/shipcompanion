@@ -80,7 +80,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
     courseDeg != null && Number.isFinite(courseDeg)
       ? { deg: Math.round(courseDeg), dir: compassDir(courseDeg, locale) }
       : null
-  const zone = snapshot.zone?.trim() || null
 
   const chip =
     'shrink-0 gap-1.5 overflow-visible whitespace-nowrap px-2.5 py-1 text-xs text-foreground sm:px-3 sm:text-sm'
@@ -160,9 +159,6 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
                 {t('aisEta', { time: when(snapshot.voyage.eta) })}
               </Badge>
             ) : null}
-            {zone ? (
-              <Badge className={chip}>{t('seaZone', { name: zone })}</Badge>
-            ) : null}
             {snapshot.departure ? (
               <Badge className={`${chip} text-muted-foreground`}>
                 <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
@@ -180,27 +176,16 @@ export function StatusStrip({ snapshot, error, locale, live, estimated }: Status
                 {t('departActual')} {atPort ? t('departPending') : t('departUnknown')}
               </Badge>
             ) : null}
-            {snapshot.vesselFinder ? (
-              <Badge className={`${chip} text-muted-foreground`}>
-                {t('vesselRemaining', { count: snapshot.vesselFinder.remaining })}
-              </Badge>
-            ) : null}
           </div>
           <div className="mt-2 flex items-end justify-between gap-3">
             {error ? (
               <p className="min-w-0 text-xs text-muted-foreground" role="status">
                 {t('statusError')}
               </p>
-            ) : snapshot.seenAt || snapshot.vesselFinder?.seenAt ? (
+            ) : snapshot.seenAt ? (
               <div className="min-w-0 text-xs leading-snug text-muted-foreground">
-                {snapshot.seenAt ? (
-                  <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
-                ) : null}
-                {snapshot.vesselFinder?.seenAt ? (
-                  <p>{t('lastSeenVessel', { time: formatSeen(snapshot.vesselFinder.seenAt, locale, !compact) })}</p>
-                ) : snapshot.vesselFinder ? (
-                  <p>{t('lastSeenVesselNone')}</p>
-                ) : null}
+                <p>{t('lastSeenShort', { time: formatSeen(snapshot.seenAt, locale, !compact) })}</p>
+                {snapshot.tracking === 'estimated' ? <p>{t('approxEstimate')}</p> : null}
               </div>
             ) : snapshot.tracking === 'no-key' ? (
               <p className="min-w-0 text-xs text-muted-foreground">{t('approxNoKey')}</p>

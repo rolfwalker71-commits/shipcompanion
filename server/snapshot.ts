@@ -1,14 +1,7 @@
 import type { AisNavState, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
-import { estimatedPosition, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
+import { estimatedPosition, estimateUnderway, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
-import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail, rememberExternalFix } from './ais.ts'
-import {
-  lastVesselFinderFix,
-  refreshVesselFinderIfNeeded,
-  vesselFinderConfigured,
-  vesselFinderError,
-  vesselFinderStatus,
-} from './vesselfinder.ts'
+import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail } from './ais.ts'
 import { fetchWeather } from './weather.ts'
 import { narrate } from './narrate.ts'
 
@@ -25,57 +18,62 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
   const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
   const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 4000) : lastKnownPosition(body.mmsi)
-  const known = streamFix ?? lastKnownPosition(body.mmsi)
+  const known = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
   const liveMs = 45 * 60 * 1000
-  const streamAge = known ? now.getTime() - known.ts : Number.POSITIVE_INFINITY
-  const streamLive = Boolean(known) && streamAge < liveMs
-  const finderFix =
-    (await refreshVesselFinderIfNeeded(body.mmsi, body.imo, streamLive).catch(() => lastVesselFinderFix())) ??
-    lastVesselFinderFix()
-
-  if (finderFix) {
-    rememberExternalFix(body.mmsi, {
-      lat: finderFix.lat,
-      lng: finderFix.lng,
-      ts: finderFix.ts,
-      sog: finderFix.sog,
-      cog: finderFix.cog,
-      heading: finderFix.heading,
-      navStatus: finderFix.navStatus,
-    })
-  }
-  const aisPoint = pickReceivedFix(known, finderFix)
-  const usedVesselFinder = Boolean(aisPoint && finderFix && aisPoint === finderFix)
-  const aisAge = aisPoint ? now.getTime() - aisPoint.ts : Number.POSITIVE_INFINITY
-  const aisLive = Boolean(aisPoint) && aisAge < liveMs
-  const guessed = estimatedPosition(body.stops, now, null)
+  const aisAge = known ? now.getTime() - known.ts : Number.POSITIVE_INFINITY
+  const aisLive = Boolean(known) && aisAge < liveMs
+  const guessed = estimatedPosition(body.stops, now, known)
   if (!guessed) return { error: 'no_route', status: 400 }
 
   const streamError = aisError()
-  const finderError = vesselFinderError(body.mmsi)
-  const hasTracker = aisConfigured() || vesselFinderConfigured()
-  const tracking = aisPoint
-    ? aisLive
-      ? 'live'
-      : 'last-known'
-    : !hasTracker
-      ? 'no-key'
-      : finderError || streamError
-        ? 'ais-error'
-        : 'estimated'
+  const hasTracker = aisConfigured()
+  const estimate =
+    !aisLive && known && !guessed.atPort
+      ? estimateUnderway(
+          {
+            lat: known.lat,
+            lng: known.lng,
+            ts: known.ts,
+            sogKn: known.sog,
+            cog: known.cog ?? known.heading,
+          },
+          guessed.next,
+          now,
+          guessed.next.arriveAt,
+        )
+      : null
 
-  const position = aisPoint
-    ? { lat: aisPoint.lat, lng: aisPoint.lng, source: aisLive ? ('live' as const) : ('approx' as const) }
-    : { ...guessed.point, source: 'approx' as const }
+  const tracking = aisLive
+    ? 'live'
+    : estimate
+      ? 'estimated'
+      : known
+        ? 'last-known'
+        : !hasTracker
+          ? 'no-key'
+          : streamError
+            ? 'ais-error'
+            : 'estimated'
+
+  const position = aisLive && known
+    ? { lat: known.lat, lng: known.lng, source: 'live' as const }
+    : estimate
+      ? { lat: estimate.point.lat, lng: estimate.point.lng, source: 'approx' as const }
+      : guessed.atPort
+        ? { ...guessed.point, source: 'approx' as const }
+        : known
+          ? { lat: known.lat, lng: known.lng, source: 'approx' as const }
+          : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
-  const motionFix = streamLive && known ? known : finderFix ?? known
-  const nav = motionFix
-    ? navStateFromAis(motionFix.navStatus, motionFix.sog)
-    : guessed.atPort
-      ? 'moored'
-      : 'unknown'
-  const berth = pickBerth(body.stops, aisPoint, leg, guessed.atPort, nav)
+  const nav = estimate
+    ? 'underway'
+    : known
+      ? navStateFromAis(known.navStatus, known.sog)
+      : guessed.atPort
+        ? 'moored'
+        : 'unknown'
+  const berth = estimate ? null : pickBerth(body.stops, known, leg, guessed.atPort, nav)
   const atPort = Boolean(berth)
   const shown = berth ?? next
   const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
@@ -83,27 +81,18 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const destination = following ?? shown
   const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
   const streamVoyage = voyageOf(body.mmsi)
-  const aisDestination = resolveAisDestination(
-    streamVoyage?.destination ?? finderFix?.destination ?? null,
-    body.stops,
-    body.locale,
-  )
-  const voyageEta = streamVoyage?.eta ?? finderFix?.eta ?? null
+  const aisDestination = resolveAisDestination(streamVoyage?.destination ?? null, body.stops, body.locale)
+  const voyageEta = streamVoyage?.eta ?? null
   const voyage =
     aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
   const weather =
     (await weatherPromise) ??
     (await fetchWeather(position.lat, position.lng, now).catch(() => null))
 
-  const lastStamp = aisPoint ?? known ?? finderFix
   const departStop = atPort ? shown : (leg.previous ?? null)
   const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
   const track = aisTrail(body.mmsi)
-  const trailEnd = track[track.length - 1] ?? (known ? { lat: known.lat, lng: known.lng } : null)
-  const gap =
-    trailEnd && haversineKm(trailEnd, position) > 8
-      ? [{ lat: trailEnd.lat, lng: trailEnd.lng }, { lat: position.lat, lng: position.lng }]
-      : []
+  const gap = estimate && estimate.track.length > 1 ? estimate.track : []
   const forecast = forecastPath(null, position, destination, atPort)
   const narrative = await narrate({
     shipName: body.shipName,
@@ -117,7 +106,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     weather,
     atPort,
     nav,
-    zone: finderFix?.zone ?? null,
+    zone: null,
     aisDestination,
     aisEta: voyageEta,
   })
@@ -125,22 +114,14 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   return {
     position,
     tracking,
-    seenAt: (() => {
-      const ais = lastAisPosition(body.mmsi)
-      if (ais) return new Date(ais.ts).toISOString()
-      if (lastStamp && !usedVesselFinder) return new Date(lastStamp.ts).toISOString()
-      return null
-    })(),
-    seenSource: usedVesselFinder ? 'vesselfinder' : aisPoint ? 'ais' : null,
-    zone: finderFix?.zone ?? null,
-    motion: motionFix
-      ? {
-          nav,
-          sogKn: motionFix.sog ?? null,
-          cog: motionFix.cog ?? null,
-          heading: motionFix.heading ?? motionFix.cog ?? null,
-        }
-      : { nav, sogKn: null, cog: null, heading: null },
+    seenAt: known ? new Date(known.ts).toISOString() : null,
+    seenSource: known ? 'ais' : null,
+    motion: {
+      nav,
+      sogKn: estimate?.sogKn ?? known?.sog ?? null,
+      cog: estimate?.heading ?? known?.cog ?? null,
+      heading: estimate?.heading ?? known?.heading ?? known?.cog ?? null,
+    },
     voyage,
     nextPort: {
       name: loc(destination),
@@ -166,27 +147,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
           actual: actualTs ? new Date(actualTs).toISOString() : null,
         }
       : null,
-    vesselFinder: (() => {
-      const status = vesselFinderStatus()
-      if (!status.configured) return null
-      return {
-        remaining: status.remaining,
-        monthlyLimit: status.monthlyLimit,
-        seenAt: finderFix ? new Date(finderFix.ts).toISOString() : null,
-      }
-    })(),
   }
-}
-
-function pickReceivedFix<T extends { lat: number; lng: number; ts: number }>(
-  ais: T | null,
-  vessel: T | null,
-): T | null {
-  if (!vessel) return ais
-  if (!ais) return vessel
-  if (vessel.ts > ais.ts + 60_000) return vessel
-  if (haversineKm(ais, vessel) > 2) return vessel
-  return ais.ts >= vessel.ts ? ais : vessel
 }
 
 function pickBerth(

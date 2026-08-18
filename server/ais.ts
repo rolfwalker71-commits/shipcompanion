@@ -398,32 +398,20 @@ export function watchMmsi(mmsi: string, stops: PortStop[] = []): void {
 }
 
 export function livePosition(mmsi: string, maxAgeMs = 20 * 60 * 1000): LiveFix | null {
-  const fix = tracks.get(mmsi)?.fix
+  const track = tracks.get(mmsi)
+  const fix = track?.aisFix ?? track?.fix
   if (!fix) return null
   if (Date.now() - fix.ts > maxAgeMs) return null
   return fix
 }
 
 export function lastKnownPosition(mmsi: string): LiveFix | null {
-  return tracks.get(mmsi)?.fix ?? null
+  const track = tracks.get(mmsi)
+  return track?.aisFix ?? track?.fix ?? null
 }
 
 export function lastAisPosition(mmsi: string): LiveFix | null {
   return tracks.get(mmsi)?.aisFix ?? null
-}
-
-/** Apply a VesselFinder (or other) fix as last-known. Large jumps stay off the solid AIS trail. */
-export function rememberExternalFix(mmsi: string, fix: LiveFix): void {
-  const prev = ensureTrack(mmsi)
-  if (prev.fix && fix.ts + 60_000 < prev.fix.ts && haversineKm(prev.fix, fix) < 2) return
-  const last = prev.trail[prev.trail.length - 1] ?? prev.fix
-  const jumpKm = last ? haversineKm(last, fix) : 0
-  tracks.set(mmsi, {
-    ...prev,
-    fix: { ...fix },
-    trail: jumpKm >= 15 ? prev.trail : appendTrail(prev.trail, fix, false),
-  })
-  void saveCache()
 }
 
 export function voyageOf(mmsi: string): VoyageData | null {

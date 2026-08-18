@@ -88,16 +88,24 @@ function diffWatch(prev: WatchState | null, next: WatchState, snapshot: Snapshot
       detailEn: snapshot.narrative,
     })
   }
-  if (prev?.tracking === 'live' && next.tracking === 'last-known' && !recentlyLogged('ais-gap', 2 * 60 * 60 * 1000)) {
+  if (
+    prev?.tracking === 'live' &&
+    (next.tracking === 'last-known' || next.tracking === 'estimated') &&
+    !recentlyLogged('ais-gap', 2 * 60 * 60 * 1000)
+  ) {
     events.push({
       kind: 'ais-gap',
       titleDe: 'AIS-Funk ist gerade still',
       titleEn: 'AIS signal went quiet',
-      detailDe: 'Die Karte zeigt den letzten empfangenen Stand.',
-      detailEn: 'The map keeps the last received position.',
+      detailDe: 'Die Karte schreibt Position aus dem letzten Funk grob fort.',
+      detailEn: 'The map dead-reckons from the last received radio.',
     })
   }
-  if (prev?.tracking === 'last-known' && next.tracking === 'live' && !recentlyLogged('ais-back', 2 * 60 * 60 * 1000)) {
+  if (
+    (prev?.tracking === 'last-known' || prev?.tracking === 'estimated') &&
+    next.tracking === 'live' &&
+    !recentlyLogged('ais-back', 2 * 60 * 60 * 1000)
+  ) {
     events.push({
       kind: 'ais-back',
       titleDe: 'AIS ist wieder da',

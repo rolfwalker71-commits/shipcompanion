@@ -11,8 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { VesselFinderStatus } from '@shared/types.ts'
-import { formatWhen } from '@shared/time.ts'
 import { useTheme, type Theme } from '@/lib/theme'
 import { useAuth } from '@/lib/auth'
 import { disablePush, enablePush, notificationState, pushSupported } from '@/lib/push'
@@ -29,7 +27,6 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
   const { logout } = useAuth()
   const [lang, setLang] = useState(i18n.language.startsWith('de') ? 'de' : 'en')
   const [trackerOn, setTrackerOn] = useState(false)
-  const [vesselFinder, setVesselFinder] = useState<VesselFinderStatus | null>(null)
   const [push, setPush] = useState<'unsupported' | 'denied' | 'off' | 'on'>('off')
   const [pushBusy, setPushBusy] = useState(false)
 
@@ -41,32 +38,14 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     if (!open) return
     void fetch('/api/status', { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: { aisConfigured?: boolean; vesselFinder?: VesselFinderStatus } | null) => {
+      .then((data: { aisConfigured?: boolean } | null) => {
         setTrackerOn(Boolean(data?.aisConfigured))
-        setVesselFinder(data?.vesselFinder ?? null)
       })
       .catch(() => {
         setTrackerOn(false)
-        setVesselFinder(null)
       })
     void notificationState().then(setPush)
   }, [open])
-
-  const locale = lang === 'en' ? 'en' : 'de'
-
-  function vesselFinderLine(): string {
-    if (!vesselFinder?.configured) return t('trackingVesselOff')
-    const quota = t('trackingVesselQuota', {
-      used: vesselFinder.usedThisMonth,
-      limit: vesselFinder.monthlyLimit,
-    })
-    if (vesselFinder.remaining <= 0) return `${quota} ${t('trackingVesselEmpty')}`
-    const when = vesselFinder.nextFetchAt ? formatWhen(vesselFinder.nextFetchAt, locale) : t('trackingVesselSoon')
-    const next = t('trackingVesselNext', { when })
-    const credits =
-      vesselFinder.credits != null ? ` ${t('trackingVesselCredits', { credits: vesselFinder.credits })}` : ''
-    return `${quota} ${next}${credits}`
-  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -80,7 +59,6 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
             <p className="text-sm leading-relaxed text-muted-foreground">
               {trackerOn ? t('trackingLive') : t('trackingOff')}
             </p>
-            <p className="text-sm leading-relaxed text-muted-foreground">{vesselFinderLine()}</p>
           </div>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 space-y-1">

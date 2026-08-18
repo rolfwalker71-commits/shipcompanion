@@ -35,7 +35,7 @@ export function HomeView({ trip }: HomeViewProps) {
           gap={gap}
           forecast={forecast}
           ports={ports}
-          heading={live ? snapshot?.motion?.heading ?? null : null}
+          heading={snapshot?.motion?.heading ?? null}
         />
       </div>
 

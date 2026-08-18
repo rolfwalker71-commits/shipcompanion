@@ -43,18 +43,98 @@ export function interpolate(a: GeoPoint, b: GeoPoint, u: number): GeoPoint {
   }
 }
 
+export type MotionHint = GeoPoint & {
+  ts: number
+  sogKn?: number | null
+  cog?: number | null
+}
+
+export type EstimateTrack = {
+  point: GeoPoint
+  heading: number | null
+  sogKn: number
+  track: GeoPoint[]
+}
+
+const EARTH_KM = 6371
+const DEFAULT_CRUISE_KN = 17
+const ESTIMATE_STEPS = 12
+
+function toRad(degrees: number): number {
+  return (degrees * Math.PI) / 180
+}
+
+function toDeg(radians: number): number {
+  return (radians * 180) / Math.PI
+}
+
 export function haversineKm(a: GeoPoint, b: GeoPoint): number {
-  const earth = 6371
   const dLat = toRad(b.lat - a.lat)
   const dLng = toRad(b.lng - a.lng)
   const h =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
-  return 2 * earth * Math.asin(Math.min(1, Math.sqrt(h)))
+  return 2 * EARTH_KM * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-function toRad(degrees: number): number {
-  return (degrees * Math.PI) / 180
+export function bearingDeg(from: GeoPoint, to: GeoPoint): number {
+  const y = Math.sin(toRad(to.lng - from.lng)) * Math.cos(toRad(to.lat))
+  const x =
+    Math.cos(toRad(from.lat)) * Math.sin(toRad(to.lat)) -
+    Math.sin(toRad(from.lat)) * Math.cos(toRad(to.lat)) * Math.cos(toRad(to.lng - from.lng))
+  return (toDeg(Math.atan2(y, x)) + 360) % 360
+}
+
+function destinationPoint(from: GeoPoint, bearing: number, distanceKm: number): GeoPoint {
+  const ang = distanceKm / EARTH_KM
+  const br = toRad(bearing)
+  const lat1 = toRad(from.lat)
+  const lng1 = toRad(from.lng)
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(ang) + Math.cos(lat1) * Math.sin(ang) * Math.cos(br))
+  const lng2 =
+    lng1 +
+    Math.atan2(Math.sin(br) * Math.sin(ang) * Math.cos(lat1), Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2))
+  return { lat: toDeg(lat2), lng: ((toDeg(lng2) + 540) % 360) - 180 }
+}
+
+function lerpAngle(from: number, to: number, t: number): number {
+  const delta = ((to - from + 540) % 360) - 180
+  return (from + delta * Math.min(1, Math.max(0, t)) + 360) % 360
+}
+
+function cruiseKn(sogKn: number | null | undefined, remainingKm: number, remainingHours: number): number {
+  if (sogKn != null && sogKn >= 1 && sogKn < 40) return sogKn
+  if (remainingHours > 0.4 && remainingKm > 5) return Math.min(22, Math.max(8, remainingKm / 1.852 / remainingHours))
+  return DEFAULT_CRUISE_KN
+}
+
+/** Dead-reckon from the last received fix toward the next port (course blends from last COG). */
+export function estimateUnderway(from: MotionHint, nextPort: GeoPoint, now: Date, arriveAt?: string): EstimateTrack {
+  const hours = Math.max(0, (now.getTime() - from.ts) / 3_600_000)
+  const remainingKm = haversineKm(from, nextPort)
+  const remainingHours = arriveAt ? Math.max(0.5, (new Date(arriveAt).getTime() - now.getTime()) / 3_600_000) : 18
+  const kn = cruiseKn(from.sogKn ?? null, remainingKm, remainingHours + hours)
+  const toNext = bearingDeg(from, nextPort)
+  const startCourse = from.cog != null && Number.isFinite(from.cog) ? ((from.cog % 360) + 360) % 360 : toNext
+  const track: GeoPoint[] = [{ lat: from.lat, lng: from.lng }]
+  let point = track[0]
+  let heading = startCourse
+  const steps = hours < 0.15 ? 1 : ESTIMATE_STEPS
+  for (let i = 1; i <= steps; i += 1) {
+    const tHours = (hours * i) / steps
+    const travelKm = Math.min(remainingKm, kn * 1.852 * tHours)
+    const blend = Math.min(1, tHours / 8)
+    heading = lerpAngle(startCourse, toNext, blend)
+    point = destinationPoint(from, heading, travelKm)
+    if (haversineKm(from, point) >= remainingKm - 0.5) {
+      point = { lat: nextPort.lat, lng: nextPort.lng }
+      heading = toNext
+      track.push(point)
+      break
+    }
+    track.push(point)
+  }
+  return { point, heading, sogKn: kn, track }
 }
 
 export function nearPort(point: GeoPoint, port: GeoPoint, km = 8): boolean {

@@ -20,7 +20,7 @@ type TripSetupDialogProps = {
   open: boolean
   trip: Trip | null
   onOpenChange: (open: boolean) => void
-  onSave: (trip: Trip) => void
+  onSave: (trip: Trip, pin?: string) => void | Promise<void>
 }
 
 export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupDialogProps) {
@@ -36,8 +36,13 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
   const [endDate, setEndDate] = useState(toDateInput(presets[0].stops[presets[0].stops.length - 1].departAt))
   const [customName, setCustomName] = useState('')
   const [customMmsi, setCustomMmsi] = useState('')
+  const [pin, setPin] = useState('')
+  const [pinConfigured, setPinConfigured] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [saveError, setSaveError] = useState<'bad' | 'missing' | 'busy' | 'failed' | null>(null)
 
   const lineShips = shipsForLine(lineId)
+  const editing = Boolean(trip)
 
   useEffect(() => {
     if (!open) return
@@ -52,6 +57,17 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
     setEndDate(trip?.endDate ?? toDateInput((preset ?? presets[0]).stops[(preset ?? presets[0]).stops.length - 1].departAt))
     setCustomName(trip?.customShip?.name ?? '')
     setCustomMmsi(trip?.customShip?.mmsi ?? '')
+    setPin('')
+    setSaveError(null)
+    setBusy(false)
+    if (trip) {
+      void fetch('/api/status', { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { pinConfigured?: boolean } | null) => {
+          setPinConfigured(data?.pinConfigured !== false)
+        })
+        .catch(() => setPinConfigured(true))
+    }
   }, [lines, open, presets, trip])
 
   function changeLine(id: string) {
@@ -74,28 +90,43 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
     setEndDate(toDateInput(preset.stops[preset.stops.length - 1].departAt))
   }
 
-  function submit() {
+  async function submit() {
     const preset = presetById(presetId) ?? presets[0]
     const line = lines.find((item) => item.id === lineId)
     const mmsi = customMmsi.replace(/\D/g, '')
     if (shipId === CUSTOM_SHIP_ID && (!customName.trim() || mmsi.length < 9)) return
-    onSave({
-      shipId,
-      customShip:
-        shipId === CUSTOM_SHIP_ID
-          ? {
-              name: customName.trim(),
-              mmsi,
-              line: line?.name ?? 'Custom',
-              lineDe: line?.nameDe ?? 'Eigene Angabe',
-            }
-          : undefined,
-      presetId: preset.id,
-      startDate,
-      endDate,
-      stops: stopsForTrip(preset.id, startDate),
-    })
-    onOpenChange(false)
+    if (editing && (!pin.trim() || !pinConfigured)) return
+    setBusy(true)
+    setSaveError(null)
+    try {
+      await onSave(
+        {
+          shipId,
+          customShip:
+            shipId === CUSTOM_SHIP_ID
+              ? {
+                  name: customName.trim(),
+                  mmsi,
+                  line: line?.name ?? 'Custom',
+                  lineDe: line?.nameDe ?? 'Eigene Angabe',
+                }
+              : undefined,
+          presetId: preset.id,
+          startDate,
+          endDate,
+          stops: stopsForTrip(preset.id, startDate),
+        },
+        editing ? pin : undefined,
+      )
+      onOpenChange(false)
+    } catch (error) {
+      const status = (error as { status?: number }).status
+      setSaveError(
+        status === 401 ? 'bad' : status === 503 ? 'missing' : status === 429 ? 'busy' : 'failed',
+      )
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -103,7 +134,7 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t('setupTitle')}</DialogTitle>
-          <DialogDescription>{t('setupHint')}</DialogDescription>
+          <DialogDescription>{editing ? t('editTripPinHint') : t('setupHint')}</DialogDescription>
         </DialogHeader>
         <div className="mt-4 flex flex-col gap-4">
           <div className="space-y-2">
@@ -198,9 +229,46 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
               />
             </div>
           </div>
-          <Button type="button" size="lg" className="mt-2" onClick={submit}>
+          {editing ? (
+            <div className="space-y-2">
+              <Label htmlFor="trip-pin">{t('dockedIntervalPin')}</Label>
+              <Input
+                id="trip-pin"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={12}
+                value={pin}
+                onChange={(event) => setPin(event.target.value)}
+                aria-label={t('dockedIntervalPin')}
+              />
+              {!pinConfigured ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {t('dockedIntervalPinMissing')}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <Button
+            type="button"
+            size="lg"
+            className="mt-2"
+            disabled={busy || (editing && (!pin.trim() || !pinConfigured))}
+            onClick={() => void submit()}
+          >
             {t('saveTrip')}
           </Button>
+          {saveError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {saveError === 'missing'
+                ? t('dockedIntervalPinMissing')
+                : saveError === 'busy'
+                  ? t('dockedIntervalBusy')
+                  : saveError === 'bad'
+                    ? t('dockedIntervalPinBad')
+                    : t('tripSaveFailed')}
+            </p>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

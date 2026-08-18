@@ -93,17 +93,18 @@ export default function App() {
         onOpenChange={(open) => {
           if (trip) setSetupOpen(open)
         }}
-        onSave={(next) => {
-          void pushRemoteTrip(next)
-            .then(() => {
-              setTrip(next)
-              setSetupOpen(false)
-            })
-            .catch(() => {
+        onSave={async (next, pin) => {
+          try {
+            await pushRemoteTrip(next, pin)
+            setTrip(next)
+          } catch (error) {
+            if (!trip) {
               saveTrip(next)
               setTrip(next)
-              setSetupOpen(false)
-            })
+              return
+            }
+            throw error
+          }
         }}
       />
       <SettingsDialog

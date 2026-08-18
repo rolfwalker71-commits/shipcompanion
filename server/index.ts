@@ -73,6 +73,18 @@ function sessionCookieOptions(request: Request) {
   }
 }
 
+function checkSettingsPin(pin: string, ip: string): { error: string; status: 401 | 429 | 503 } | null {
+  const bucket = `pin:${ip}`
+  if (!allowLoginAttempt(bucket)) return { error: 'too_many_attempts', status: 429 }
+  if (!settingsPinConfigured()) return { error: 'pin_not_set', status: 503 }
+  if (!keysMatch(pin, process.env.SETTINGS_PIN ?? '')) {
+    recordFailedLogin(bucket)
+    return { error: 'invalid_pin', status: 401 }
+  }
+  clearLoginAttempts(bucket)
+  return null
+}
+
 function requireSession() {
   return async (
     c: { req: { raw: Request }; json: (data: unknown, status?: number) => Response },
@@ -132,26 +144,17 @@ app.get('/api/status', (c) => {
   return c.json({
     aisConfigured: aisConfigured(),
     dataDocked: dataDockedStatus(),
+    pinConfigured: settingsPinConfigured(),
     llmConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
     aisError: aisError(),
   })
 })
 
 app.post('/api/datadocked/interval', async (c) => {
-  const ip = `pin:${clientIp(c.req.raw.headers)}`
-  if (!allowLoginAttempt(ip)) {
-    return c.json({ error: 'too_many_attempts' }, 429)
-  }
-  if (!settingsPinConfigured()) {
-    return c.json({ error: 'pin_not_set' }, 503)
-  }
   const body = (await c.req.json().catch(() => null)) as { pin?: string; hours?: number } | null
+  const pinFail = checkSettingsPin(String(body?.pin ?? ''), clientIp(c.req.raw.headers))
+  if (pinFail) return c.json({ error: pinFail.error }, pinFail.status)
   const hours = Number(body?.hours)
-  if (!keysMatch(String(body?.pin ?? ''), process.env.SETTINGS_PIN ?? '')) {
-    recordFailedLogin(ip)
-    return c.json({ error: 'invalid_pin' }, 401)
-  }
-  clearLoginAttempts(ip)
   if (!setIntervalHours(hours)) return c.json({ error: 'invalid_interval' }, 400)
   return c.json({ dataDocked: dataDockedStatus() })
 })
@@ -161,8 +164,14 @@ app.get('/api/trip', (c) => {
 })
 
 app.put('/api/trip', async (c) => {
-  const trip = parseTrip(await c.req.json().catch(() => null))
+  const body = await c.req.json().catch(() => null)
+  const trip = parseTrip(body)
   if (!trip) return c.json({ error: 'invalid_trip' }, 400)
+  if (getStoredTrip()) {
+    const pin = typeof body === 'object' && body && 'pin' in body ? String((body as { pin?: unknown }).pin ?? '') : ''
+    const pinFail = checkSettingsPin(pin, clientIp(c.req.raw.headers))
+    if (pinFail) return c.json({ error: pinFail.error }, pinFail.status)
+  }
   await saveStoredTrip(trip)
   startTripWatch()
   return c.json({ trip })

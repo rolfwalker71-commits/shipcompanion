@@ -19,14 +19,15 @@ Schiff und Reederei: Zahnrad → **Schiff und Route ändern**. Erst Reederei, da
 
 ## Docker
 
-Auf dem Familienserver nach `git pull` **neu bauen**, sonst bleibt das alte Image (große AIS-Kreise, Schiff in Barcelona):
+Image kommt von GitHub Container Registry. Auf dem Familienserver:
 
 ```bash
-git pull
-GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build --force-recreate
+docker compose down && docker compose pull && docker compose up -d && docker system prune -a -f
 ```
 
-Danach die installierte App einmal vollständig schließen und neu öffnen (PWA-Cache). `http://…:3344/api/health` zeigt `"sha"` — das muss zum `git rev-parse --short HEAD` passen.
+`docker compose pull` holt `ghcr.io/rolfwalker71-commits/shipcompanion:latest`. Ohne `--build` — GitHub Actions baut das Image bei jedem Push auf `main`.
+
+Danach die installierte App einmal ganz schließen und neu öffnen. `http://…:3344/api/health` zeigt `"sha"` (Git-Commit), sobald ein neues Image da ist.
 
 Port **3344**. Keys stay in `.env` on the server, never in the browser bundle.
 

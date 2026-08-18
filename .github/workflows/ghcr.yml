@@ -23,6 +23,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: |
             ghcr.io/rolfwalker71-commits/shipcompanion:latest
             ghcr.io/rolfwalker71-commits/shipcompanion:${{ github.sha }}

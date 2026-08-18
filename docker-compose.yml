@@ -3,9 +3,9 @@ services:
     build:
       context: .
       args:
-        GIT_SHA: ${GIT_SHA:-local}
-    image: shipcompanion:local
-    pull_policy: build
+        GIT_SHA: ${GIT_SHA:-unknown}
+    image: ghcr.io/rolfwalker71-commits/shipcompanion:latest
+    pull_policy: always
     ports:
       - "3344:3344"
     env_file:

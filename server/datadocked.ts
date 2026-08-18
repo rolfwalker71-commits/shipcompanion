@@ -30,7 +30,6 @@ const BASE = 'https://datadocked.com/api/vessels_operations'
 const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_INTERVAL_HOURS = 3
 const DEFAULT_MONTHLY_LIMIT = 250
-const STATUS_MAX_AGE_MS = 24 * HOUR_MS
 
 let store = readJsonSync<Store>('datadocked.json', emptyStore())
 let inflight: Promise<DockedFix | null> | null = null
@@ -140,10 +139,13 @@ export function dataDockedStatus(): DataDockedStatus {
 export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean): Promise<DockedFix | null> {
   if (!apiKey() || !mmsi) return store.lastFix
   rollMonth()
+  const startup = startupFetchPending
+  if (startup && store.credits == null) {
+    await refreshCredits().catch(() => {})
+  }
   if (aisFresh) return store.lastFix
   if (remainingLocal() <= 0) return store.lastFix
   if (store.credits === 0) return store.lastFix
-  const startup = startupFetchPending
   if (!startup && store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) return store.lastFix
   if (!startup && store.lastAttemptAt && Date.now() - store.lastAttemptAt < 15 * 60 * 1000) {
     return store.lastFix
@@ -189,12 +191,7 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
       )
     }
     persist()
-    if (!store.lastStatusAt || Date.now() - store.lastStatusAt > STATUS_MAX_AGE_MS) {
-      void refreshCredits()
-    } else {
-      if (store.credits != null && store.credits > 0) store.credits = Math.max(0, store.credits - 1)
-      persist()
-    }
+    await refreshCredits().catch(() => {})
     return store.lastFix
   } catch (error) {
     store.lastAttemptAt = Date.now()

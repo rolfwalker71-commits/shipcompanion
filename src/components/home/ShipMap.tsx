@@ -10,7 +10,7 @@ const TILE_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
 
 /** Coastal AIS is typically usable out to about this distance from a berth. */
-const AIS_RANGE_M = 200_000
+const AIS_RANGE_M = 20_000
 
 const SHIP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 40" fill="currentColor" aria-hidden="true"><path d="M12 1.6c2.3 4.8 6.8 9.6 7.8 17.2v11.8c0 3.5-3.3 6.4-7.8 7.4-4.5-1-7.8-3.9-7.8-7.4V18.8C5.2 11.2 9.7 6.4 12 1.6z"/><circle cx="12" cy="20" r="2.4" fill="var(--card)"/></svg>`
 

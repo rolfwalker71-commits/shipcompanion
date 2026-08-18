@@ -2,7 +2,7 @@
 import { clientsClaim } from 'workbox-core'
 import { ExpirationPlugin } from 'workbox-expiration'
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
-import { NavigationRoute, registerRoute } from 'workbox-routing'
+import { registerRoute } from 'workbox-routing'
 import { NetworkFirst, NetworkOnly } from 'workbox-strategies'
 
 declare const self: ServiceWorkerGlobalScope & {
@@ -17,16 +17,15 @@ precacheAndRoute(self.__WB_MANIFEST)
 registerRoute(({ url }) => url.pathname.startsWith('/api/'), new NetworkOnly())
 
 registerRoute(
-  ({ url }) => url.hostname === 'tile.openstreetmap.org',
-  new NetworkFirst({
-    cacheName: 'osm-tiles',
-    plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 })],
-  }),
+  ({ request, url }) => request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/widget',
+  new NetworkOnly(),
 )
 
 registerRoute(
-  new NavigationRoute(new NetworkFirst({ cacheName: 'pages' }), {
-    denylist: [/^\/api\//, /^\/sw\.js(?:$|\?)/, /^\/workbox-/],
+  ({ url }) => url.hostname === 'tile.openstreetmap.org' || url.hostname.endsWith('basemaps.cartocdn.com'),
+  new NetworkFirst({
+    cacheName: 'map-tiles',
+    plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 })],
   }),
 )
 

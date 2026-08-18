@@ -19,9 +19,14 @@ Schiff und Reederei: Zahnrad → **Schiff und Route ändern**. Erst Reederei, da
 
 ## Docker
 
+Auf dem Familienserver nach `git pull` **neu bauen**, sonst bleibt das alte Image (große AIS-Kreise, Schiff in Barcelona):
+
 ```bash
-docker compose up --build
+git pull
+GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build --force-recreate
 ```
+
+Danach die installierte App einmal vollständig schließen und neu öffnen (PWA-Cache). `http://…:3344/api/health` zeigt `"sha"` — das muss zum `git rev-parse --short HEAD` passen.
 
 Port **3344**. Keys stay in `.env` on the server, never in the browser bundle.
 

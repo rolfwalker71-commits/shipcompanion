@@ -1,7 +1,11 @@
 services:
   app:
-    build: .
-    image: ghcr.io/rolfwalker71-commits/shipcompanion:latest
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-local}
+    image: shipcompanion:local
+    pull_policy: build
     ports:
       - "3344:3344"
     env_file:

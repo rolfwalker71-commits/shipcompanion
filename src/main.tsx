@@ -21,7 +21,13 @@ if (import.meta.env.DEV) {
     }
   })()
 } else {
-  registerSW({ immediate: true })
+  registerSW({
+    immediate: true,
+    onRegisteredSW(_url, registration) {
+      void registration?.update()
+      window.setInterval(() => void registration?.update(), 60_000)
+    },
+  })
 }
 
 const standalone =

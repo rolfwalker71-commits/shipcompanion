@@ -7,8 +7,10 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
+ARG GIT_SHA=unknown
 ENV NODE_ENV=production
 ENV PORT=3344
+ENV GIT_SHA=$GIT_SHA
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm install tsx@4.23.12
 COPY --from=build /app/dist ./dist

@@ -85,7 +85,7 @@ function requireSession() {
   }
 }
 
-app.get('/api/health', (c) => c.json({ ok: true }))
+app.get('/api/health', (c) => c.json({ ok: true, sha: process.env.GIT_SHA ?? 'dev' }))
 
 app.post('/api/auth/login', async (c) => {
   const expected = expectedAccessKey()
@@ -187,8 +187,24 @@ app.post('/api/snapshot', async (c) => {
 })
 
 if (isProd && existsSync('dist/index.html')) {
+  app.use('*', async (c, next) => {
+    const path = c.req.path
+    if (
+      path === '/' ||
+      path === '/widget' ||
+      path === '/index.html' ||
+      path === '/sw.js' ||
+      path === '/manifest.webmanifest'
+    ) {
+      c.header('Cache-Control', 'no-store')
+    } else if (path.startsWith('/assets/')) {
+      c.header('Cache-Control', 'public, max-age=31536000, immutable')
+    }
+    await next()
+  })
   app.use('/*', serveStatic({ root: './dist' }))
   app.get('*', async (c) => {
+    c.header('Cache-Control', 'no-store')
     const html = await readFile('dist/index.html', 'utf8')
     return c.html(html)
   })

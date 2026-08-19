@@ -19,7 +19,8 @@ const VOYAGER_ATTR =
 const SATELLITE_ATTR = 'Tiles &copy; Esri'
 
 /** Coastal AIS is typically usable out to about this distance from a berth. */
-const AIS_RANGE_M = 20_000
+const NM_IN_M = 1852
+const AIS_RANGE_M = 40 * NM_IN_M
 
 const SHIP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 40" fill="currentColor" aria-hidden="true"><path d="M12 1.6c2.3 4.8 6.8 9.6 7.8 17.2v11.8c0 3.5-3.3 6.4-7.8 7.4-4.5-1-7.8-3.9-7.8-7.4V18.8C5.2 11.2 9.7 6.4 12 1.6z"/><circle cx="12" cy="20" r="2.4" fill="var(--card)"/></svg>`
 
@@ -54,7 +55,7 @@ function portIcon(port: MapPort) {
   const time = `<span class="port-marker-time">${escapeHtml(port.when)}</span>`
   return L.divIcon({
     className: 'cruise-div-icon',
-    html: `<div class="port-marker port-marker-${port.kind}">${PIN_SVG}<div class="port-caption"><span class="port-marker-label">${escapeHtml(port.name)}</span>${time}</div></div>`,
+    html: `<div class="port-marker port-marker-${port.kind}"><div class="port-caption"><span class="port-marker-label">${escapeHtml(port.name)}</span>${time}</div>${PIN_SVG}</div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
   })

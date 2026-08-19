@@ -33,6 +33,7 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
     tracking: 'estimated',
     seenAt: null,
     seenSource: null,
+    seenAccuracyM: null,
     motion: {
       nav: atPort ? 'moored' : 'underway',
       sogKn: null,

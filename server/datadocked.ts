@@ -33,7 +33,18 @@ const DEFAULT_INTERVAL_HOURS = 3
 const DEFAULT_MONTHLY_LIMIT = 250
 
 let store = readJsonSync<Store>('datadocked.json', emptyStore())
-let inflight: Promise<DockedFix | null> | null = null
+type FetchOutcome =
+  | { kind: 'ok'; fix: DockedFix }
+  | { kind: 'no_position' }
+  | { kind: 'error'; message: string }
+
+export type ForceRefreshError = 'not_configured' | 'no_credits' | 'no_mmsi' | 'no_position' | 'fetch_failed'
+
+export type ForceRefreshResult =
+  | { ok: true; fix: DockedFix; status: DataDockedStatus }
+  | { ok: false; error: ForceRefreshError; status: DataDockedStatus }
+
+let inflight: Promise<FetchOutcome> | null = null
 let startupFetchPending = true
 let gapFetchAt: number | null = null
 let lastFailAt: number | null = null
@@ -188,15 +199,47 @@ export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean)
   if (!startupFetchPending && gapFetchAt && Date.now() - gapFetchAt < intervalMs()) {
     return store.lastFix
   }
-  if (inflight) return inflight
+  if (inflight) {
+    await inflight
+    return store.lastFix
+  }
   startupFetchPending = false
   inflight = fetchLocation(mmsi).finally(() => {
     inflight = null
   })
-  return inflight
+  await inflight
+  return store.lastFix
 }
 
-async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
+/** Admin fetch: ignore AIS freshness, interval, and failure backoff. Still spends a credit. */
+export async function forceRefreshDataDocked(mmsi: string): Promise<ForceRefreshResult> {
+  rollMonth()
+  if (!apiKey()) return { ok: false, error: 'not_configured', status: dataDockedStatus() }
+  if (!mmsi) return { ok: false, error: 'no_mmsi', status: dataDockedStatus() }
+  if (store.credits == null) {
+    await refreshCredits().catch(() => {})
+  }
+  if (remainingLocal() <= 0 || store.credits === 0) {
+    return { ok: false, error: 'no_credits', status: dataDockedStatus() }
+  }
+  if (inflight) {
+    const pending = await inflight
+    if (pending.kind === 'ok') return { ok: true, fix: pending.fix, status: dataDockedStatus() }
+    if (remainingLocal() <= 0 || store.credits === 0) {
+      return { ok: false, error: 'no_credits', status: dataDockedStatus() }
+    }
+  }
+  lastFailAt = null
+  inflight = fetchLocation(mmsi).finally(() => {
+    inflight = null
+  })
+  const outcome = await inflight
+  if (outcome.kind === 'ok') return { ok: true, fix: outcome.fix, status: dataDockedStatus() }
+  if (outcome.kind === 'no_position') return { ok: false, error: 'no_position', status: dataDockedStatus() }
+  return { ok: false, error: 'fetch_failed', status: dataDockedStatus() }
+}
+
+async function fetchLocation(mmsi: string): Promise<FetchOutcome> {
   const url = new URL(`${BASE}/get-vessel-location`)
   url.searchParams.set('imo_or_mmsi', mmsi)
 
@@ -214,7 +257,7 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
       lastFailAt = Date.now()
       persist()
       console.warn('Data Docked error:', store.lastError)
-      return store.lastFix
+      return { kind: 'error', message: store.lastError }
     }
 
     const data: unknown = await response.json()
@@ -235,14 +278,14 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
     }
     persist()
     await refreshCredits().catch(() => {})
-    return store.lastFix
+    return fix ? { kind: 'ok', fix } : { kind: 'no_position' }
   } catch (error) {
     store.lastAttemptAt = Date.now()
     store.lastError = error instanceof Error ? error.message : 'network_error'
     lastFailAt = Date.now()
     persist()
     console.warn('Data Docked error:', store.lastError)
-    return store.lastFix
+    return { kind: 'error', message: store.lastError }
   }
 }
 

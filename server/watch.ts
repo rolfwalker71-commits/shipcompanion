@@ -11,7 +11,7 @@ type WatchState = {
   portName: string
   tracking: TrackingStatus
   distanceKm: number | null
-  seenSource?: 'ais' | 'datadocked' | null
+  seenSource?: 'ais' | 'datadocked' | 'manual' | null
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -121,7 +121,8 @@ function diffWatch(prev: WatchState | null, next: WatchState, snapshot: Snapshot
   const aisReturned =
     next.seenSource === 'ais' &&
     (((prev?.tracking === 'last-known' || prev?.tracking === 'estimated') && next.tracking === 'live') ||
-      prev?.seenSource === 'datadocked')
+      prev?.seenSource === 'datadocked' ||
+      prev?.seenSource === 'manual')
   if (aisReturned && !recentlyLogged('ais-back', 2 * 60 * 60 * 1000)) {
     events.push({
       kind: 'ais-back',

@@ -14,6 +14,7 @@ import { narrate } from './narrate.ts'
 import { sunTimes, tzFromLongitude } from '../shared/sun.ts'
 import type { DockedFix } from './datadocked.ts'
 import type { LiveFix } from './ais.ts'
+import { lastManualFix, MANUAL_LIVE_MS, manualIsFresh, type ManualFix } from './manual-position.ts'
 
 type ReceivedFix = {
   lat: number
@@ -24,6 +25,7 @@ type ReceivedFix = {
   heading?: number | null
   navStatus?: number | null
   fromDocked: boolean
+  fromManual: boolean
 }
 
 export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResponse | { error: string; status: 400 }> {
@@ -42,14 +44,20 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 12_000) : lastKnownPosition(body.mmsi)
   const aisFix = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
   const aisLive = Boolean(livePosition(body.mmsi, AIS_LIVE_MS))
+  const manualFix = lastManualFix()
+  const nowMs = now.getTime()
   // After reconnect/boot, wait a few minutes for coastal AIS before spending credits.
-  const skipPaidFetch = aisConfigured() && (aisLive || aisFallbackGraceActive())
+  // A fresh onboard GPS report also skips Data Docked until it ages past MANUAL_LIVE_MS.
+  const skipPaidFetch =
+    (aisConfigured() && (aisLive || aisFallbackGraceActive())) || manualIsFresh(manualFix, nowMs)
   const dockedFix = skipPaidFetch
     ? lastDataDockedFix()
     : ((await refreshDataDockedIfNeeded(body.mmsi, aisLive).catch(() => lastDataDockedFix())) ?? lastDataDockedFix())
-  const received = pickReceivedFix(aisFix, dockedFix, now.getTime(), AIS_LIVE_MS)
-  const receivedAge = received ? now.getTime() - received.ts : Number.POSITIVE_INFINITY
+  const received = pickReceivedFix(aisFix, dockedFix, manualFix, nowMs, AIS_LIVE_MS)
+  const receivedAge = received ? nowMs - received.ts : Number.POSITIVE_INFINITY
   const receivedLive = Boolean(received) && receivedAge < AIS_LIVE_MS
+  const manualLastKnown =
+    Boolean(received?.fromManual) && !receivedLive && receivedAge < MANUAL_LIVE_MS
   const guessed = estimatedPosition(body.stops, now, received)
   if (!guessed) return { error: 'no_route', status: 400 }
 
@@ -57,7 +65,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const dockedError = dataDockedError()
   const hasTracker = aisConfigured() || dataDockedConfigured()
   const estimate =
-    !receivedLive && received && !guessed.atPort
+    !receivedLive && !manualLastKnown && received && !guessed.atPort
       ? estimateUnderway(
           {
             lat: received.lat,
@@ -151,7 +159,8 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     position,
     tracking,
     seenAt: received ? new Date(received.ts).toISOString() : null,
-    seenSource: received?.fromDocked ? 'datadocked' : received ? 'ais' : null,
+    seenSource: received?.fromManual ? 'manual' : received?.fromDocked ? 'datadocked' : received ? 'ais' : null,
+    seenAccuracyM: received?.fromManual ? (manualFix?.accuracyM ?? null) : null,
     motion: {
       nav,
       sogKn: estimate?.sogKn ?? received?.sog ?? null,
@@ -202,14 +211,35 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 function pickReceivedFix(
   ais: LiveFix | null,
   docked: DockedFix | null,
+  manual: ManualFix | null,
   now: number,
   liveMs: number,
 ): ReceivedFix | null {
   const aisFresh = Boolean(ais && now - ais.ts < liveMs)
-  if (aisFresh && ais) return { ...ais, fromDocked: false }
-  if (!docked) return ais ? { ...ais, fromDocked: false } : null
-  if (!ais) return { ...docked, fromDocked: true }
-  return docked.ts > ais.ts ? { ...docked, fromDocked: true } : { ...ais, fromDocked: false }
+  if (aisFresh && ais) return toReceived(ais, 'ais')
+  const candidates: ReceivedFix[] = []
+  if (ais) candidates.push(toReceived(ais, 'ais'))
+  if (docked) candidates.push(toReceived(docked, 'datadocked'))
+  if (manual) candidates.push(toReceived(manual, 'manual'))
+  if (!candidates.length) return null
+  return candidates.reduce((newest, row) => (row.ts > newest.ts ? row : newest))
+}
+
+function toReceived(
+  fix: { lat: number; lng: number; ts: number; sog?: number | null; cog?: number | null; heading?: number | null; navStatus?: number | null },
+  source: 'ais' | 'datadocked' | 'manual',
+): ReceivedFix {
+  return {
+    lat: fix.lat,
+    lng: fix.lng,
+    ts: fix.ts,
+    sog: fix.sog ?? null,
+    cog: fix.cog ?? null,
+    heading: fix.heading ?? null,
+    navStatus: fix.navStatus ?? null,
+    fromDocked: source === 'datadocked',
+    fromManual: source === 'manual',
+  }
 }
 
 function buildGap(

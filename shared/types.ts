@@ -68,7 +68,8 @@ export type SnapshotResponse = {
   position: GeoPoint & { source: PositionSource }
   tracking: TrackingStatus
   seenAt: string | null
-  seenSource: 'ais' | 'datadocked' | null
+  seenSource: 'ais' | 'datadocked' | 'manual' | null
+  seenAccuracyM: number | null
   motion: {
     nav: AisNavState
     sogKn: number | null
@@ -126,7 +127,14 @@ export type DataDockedStatus = {
   pinConfigured: boolean
 }
 
-export type TimelineKind = 'departed' | 'arrived' | 'approaching' | 'ais-gap' | 'ais-back' | 'docked-back'
+export type TimelineKind =
+  | 'departed'
+  | 'arrived'
+  | 'approaching'
+  | 'ais-gap'
+  | 'ais-back'
+  | 'docked-back'
+  | 'manual-position'
 
 export type TimelineEvent = {
   id: string

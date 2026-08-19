@@ -14,6 +14,7 @@ import {
 import { formatWhen } from '@shared/time.ts'
 import { useTheme, type Theme } from '@/lib/theme'
 import { useAuth } from '@/lib/auth'
+import { ManualPositionDialog } from '@/components/home/ManualPositionDialog'
 import { disablePush, enablePush, notificationState, pushSupported } from '@/lib/push'
 import type { DataDockedStatus } from '@shared/types.ts'
 
@@ -33,8 +34,18 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
   const [intervalHours, setIntervalHours] = useState('3')
   const [intervalBusy, setIntervalBusy] = useState(false)
   const [intervalMsg, setIntervalMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
+  const [fetchBusy, setFetchBusy] = useState(false)
+  const [fetchMsg, setFetchMsg] = useState<'ok' | 'bad' | 'forbidden' | 'no_credits' | 'no_mmsi' | null>(null)
   const [push, setPush] = useState<'unsupported' | 'denied' | 'off' | 'on'>('off')
   const [pushBusy, setPushBusy] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [lastManual, setLastManual] = useState<{
+    at: string
+    accuracyM: number | null
+    postedBy: string | null
+  } | null>(null)
+  const [clearBusy, setClearBusy] = useState(false)
+  const [clearMsg, setClearMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
 
   useEffect(() => {
     setLang(i18n.language.startsWith('de') ? 'de' : 'en')
@@ -51,13 +62,27 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
           setIntervalHours(String(data.dataDocked.intervalHours === 1 ? 1 : 3))
         }
         setIntervalMsg(null)
+        setFetchMsg(null)
       })
       .catch(() => {
         setTrackerOn(false)
         setDataDocked(null)
       })
     void notificationState().then(setPush)
-  }, [open])
+    if (isAdmin) {
+      void fetch('/api/manual-position', { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then(
+          (data: {
+            fix?: { at: string; accuracyM: number | null; postedBy: string | null } | null
+          } | null) => {
+            setLastManual(data?.fix ?? null)
+            setClearMsg(null)
+          },
+        )
+        .catch(() => setLastManual(null))
+    }
+  }, [open, isAdmin])
 
   const locale = lang === 'en' ? 'en' : 'de'
 
@@ -103,7 +128,63 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
       .finally(() => setIntervalBusy(false))
   }
 
+  function fetchDataDockedNow() {
+    setFetchBusy(true)
+    setFetchMsg(null)
+    void fetch('/api/datadocked/fetch', {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as {
+          error?: string
+          dataDocked?: DataDockedStatus
+        } | null
+        if (data?.dataDocked) setDataDocked(data.dataDocked)
+        if (res.status === 403) {
+          setFetchMsg('forbidden')
+          return
+        }
+        if (res.status === 429 || data?.error === 'no_credits') {
+          setFetchMsg('no_credits')
+          return
+        }
+        if (data?.error === 'no_mmsi') {
+          setFetchMsg('no_mmsi')
+          return
+        }
+        if (!res.ok) {
+          setFetchMsg('bad')
+          return
+        }
+        setFetchMsg('ok')
+      })
+      .catch(() => setFetchMsg('bad'))
+      .finally(() => setFetchBusy(false))
+  }
+
+  function clearManual() {
+    setClearBusy(true)
+    setClearMsg(null)
+    void fetch('/api/manual-position', { method: 'DELETE', credentials: 'include' })
+      .then((res) => {
+        if (res.status === 403) {
+          setClearMsg('forbidden')
+          return
+        }
+        if (!res.ok) {
+          setClearMsg('bad')
+          return
+        }
+        setLastManual(null)
+        setClearMsg('ok')
+      })
+      .catch(() => setClearMsg('bad'))
+      .finally(() => setClearBusy(false))
+  }
+
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
@@ -113,6 +194,49 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
         <div className="mt-4 flex flex-col gap-4">
           {isAdmin ? (
             <>
+              <div className="space-y-2">
+                <p className="text-sm font-medium leading-snug">{t('manualPositionTitle')}</p>
+                <p className="text-sm leading-relaxed text-muted-foreground">{t('manualPositionSettingsHint')}</p>
+                {lastManual ? (
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {t('manualPositionLast', { when: formatWhen(lastManual.at, locale) })}
+                    {lastManual.accuracyM != null
+                      ? ` · ${t('manualPositionAccuracy', { meters: Math.round(lastManual.accuracyM) })}`
+                      : ''}
+                    {lastManual.postedBy ? ` · ${lastManual.postedBy}` : ''}
+                  </p>
+                ) : null}
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={() => {
+                    onOpenChange(false)
+                    setReportOpen(true)
+                  }}
+                >
+                  {t('manualPositionOpen')}
+                </Button>
+                {lastManual ? (
+                  <Button
+                    variant="destructive"
+                    className="w-full"
+                    disabled={clearBusy}
+                    onClick={clearManual}
+                  >
+                    {t('manualPositionClear')}
+                  </Button>
+                ) : null}
+                {clearMsg === 'ok' ? (
+                  <p className="text-sm text-foreground" role="status">
+                    {t('manualPositionClearOk')}
+                  </p>
+                ) : null}
+                {clearMsg && clearMsg !== 'ok' ? (
+                  <p className="text-sm text-destructive" role="alert">
+                    {clearMsg === 'forbidden' ? t('settingsForbidden') : t('tripSaveFailed')}
+                  </p>
+                ) : null}
+              </div>
               <div className="space-y-1">
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   {trackerOn ? t('trackingLive') : t('trackingOff')}
@@ -143,6 +267,38 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
                   {intervalMsg && intervalMsg !== 'ok' ? (
                     <p className="text-sm text-destructive" role="alert">
                       {intervalMsg === 'forbidden' ? t('settingsForbidden') : t('tripSaveFailed')}
+                    </p>
+                  ) : null}
+                  <p className="text-sm leading-relaxed text-muted-foreground">{t('dockedFetchHint')}</p>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {t('dockedRemaining', {
+                      count: dataDocked.credits ?? dataDocked.remaining,
+                    })}
+                  </p>
+                  <Button
+                    variant="default"
+                    className="w-full whitespace-normal"
+                    disabled={fetchBusy}
+                    onClick={fetchDataDockedNow}
+                  >
+                    {fetchBusy ? t('dockedFetchBusy') : t('dockedFetchNow')}
+                  </Button>
+                  {fetchMsg === 'ok' ? (
+                    <p className="text-sm text-foreground" role="status">
+                      {t('dockedFetchOk')}
+                    </p>
+                  ) : null}
+                  {fetchMsg && fetchMsg !== 'ok' ? (
+                    <p className="text-sm text-destructive" role="alert">
+                      {fetchMsg === 'forbidden'
+                        ? t('settingsForbidden')
+                        : fetchMsg === 'no_credits'
+                          ? t('dockedFetchNoCredits')
+                          : fetchMsg === 'no_mmsi'
+                            ? t('dockedFetchNoTrip')
+                            : dataDocked.lastError
+                              ? t('dockedFetchFailedDetail', { error: dataDocked.lastError })
+                              : t('dockedFetchFailed')}
                     </p>
                   ) : null}
                 </div>
@@ -239,5 +395,22 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
         </div>
       </DialogContent>
     </Dialog>
+    <ManualPositionDialog
+      open={reportOpen}
+      onOpenChange={setReportOpen}
+      onSubmitted={() => {
+        void fetch('/api/manual-position', { credentials: 'include' })
+          .then((res) => (res.ok ? res.json() : null))
+          .then(
+            (data: {
+              fix?: { at: string; accuracyM: number | null; postedBy: string | null } | null
+            } | null) => {
+              setLastManual(data?.fix ?? null)
+            },
+          )
+          .catch(() => {})
+      }}
+    />
+    </>
   )
 }

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowDown, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, RadioTower, Ship, Sun } from 'lucide-react'
+import { ArrowDown, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, RadioTower, Ship, Smartphone, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { CruiseShip, PortStop, SnapshotResponse, WeatherInfo } from '@shared/types.ts'
 import { DISPLAY_TZ, formatArrivalParts, formatClock, formatSeen } from '@shared/time.ts'
@@ -109,20 +109,29 @@ export function StatusStrip({
   const sourceLabel =
     snapshot.seenSource === 'ais'
       ? t('signalAis')
-      : snapshot.seenSource === 'datadocked'
-        ? t('sourceDd')
-        : snapshot.dataDocked?.seenAt
+      : snapshot.seenSource === 'manual'
+        ? t('sourceBoard')
+        : snapshot.seenSource === 'datadocked'
           ? t('sourceDd')
-          : null
+          : snapshot.dataDocked?.seenAt
+            ? t('sourceDd')
+            : null
   const sourceAria =
     snapshot.seenSource === 'ais'
       ? t('signalAis')
-      : snapshot.seenSource === 'datadocked' || snapshot.dataDocked?.seenAt
-        ? t('sourceDdFull')
-        : null
+      : snapshot.seenSource === 'manual'
+        ? t('sourceBoardFull')
+        : snapshot.seenSource === 'datadocked' || snapshot.dataDocked?.seenAt
+          ? t('sourceDdFull')
+          : null
+  const SourceIcon = snapshot.seenSource === 'manual' ? Smartphone : RadioTower
   const seenIso = snapshot.seenAt ?? snapshot.dataDocked?.seenAt ?? null
   const seenTime = seenIso ? formatClock(new Date(seenIso), locale, DISPLAY_TZ) : null
-  const liveMeta = [sourceAria, seenTime ? t('lastUpdateAria', { time: seenTime }) : null]
+  const accuracyLabel =
+    snapshot.seenSource === 'manual' && snapshot.seenAccuracyM != null
+      ? t('manualPositionAccuracy', { meters: Math.round(snapshot.seenAccuracyM) })
+      : null
+  const liveMeta = [sourceAria, seenTime ? t('lastUpdateAria', { time: seenTime }) : null, accuracyLabel]
     .filter(Boolean)
     .join(', ')
 
@@ -153,11 +162,11 @@ export function StatusStrip({
                 {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
                 {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
               </Badge>
-              {sourceLabel || seenTime ? (
+              {sourceLabel || seenTime || accuracyLabel ? (
                 <div className="mt-1.5 flex flex-col items-center gap-0.5 text-center">
                   {sourceLabel ? (
                     <p className="flex items-center gap-0.5 text-xs font-medium leading-none text-muted-foreground">
-                      <RadioTower className="h-3 w-3 text-sky-700" aria-hidden />
+                      <SourceIcon className="h-3 w-3 text-sky-700" aria-hidden />
                       {sourceLabel}
                     </p>
                   ) : null}
@@ -168,6 +177,9 @@ export function StatusStrip({
                     >
                       {seenTime}
                     </p>
+                  ) : null}
+                  {accuracyLabel ? (
+                    <p className="text-xs leading-none text-muted-foreground">{accuracyLabel}</p>
                   ) : null}
                 </div>
               ) : null}

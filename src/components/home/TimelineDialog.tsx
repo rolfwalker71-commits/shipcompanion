@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Anchor, Radio, RadioTower, Satellite, Ship, Waypoints } from 'lucide-react'
+import { Anchor, Radio, RadioTower, Satellite, Ship, Smartphone, Waypoints } from 'lucide-react'
 import type { TimelineEvent, TimelineKind } from '@shared/types.ts'
 import { formatWhen } from '@shared/time.ts'
 import { useCompactUi } from '@/lib/compact'
@@ -86,5 +86,6 @@ function kindIcon(kind: TimelineKind) {
   if (kind === 'approaching') return Waypoints
   if (kind === 'ais-gap') return Radio
   if (kind === 'docked-back') return Satellite
+  if (kind === 'manual-position') return Smartphone
   return RadioTower
 }

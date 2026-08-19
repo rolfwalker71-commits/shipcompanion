@@ -7,7 +7,8 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { SnapshotRequest } from '../shared/types.ts'
 import { aisConfigured, aisError } from './ais.ts'
-import { dataDockedStatus, setIntervalHours, settingsPinConfigured } from './datadocked.ts'
+import { dataDockedStatus, forceRefreshDataDocked, setIntervalHours, settingsPinConfigured } from './datadocked.ts'
+import { tripShip } from '../shared/ships.ts'
 import {
   COOKIE_NAME,
   allowLoginAttempt,
@@ -23,8 +24,9 @@ import {
 } from './auth.ts'
 import { getStoredTrip, parseTrip, saveStoredTrip } from './trip-store.ts'
 import { buildSnapshot } from './snapshot.ts'
-import { listTimeline } from './timeline.ts'
-import { pushPublicKey, removePushSub, savePushSub } from './push.ts'
+import { addTimelineEvent, listTimeline } from './timeline.ts'
+import { notifyFamily, pushPublicKey, removePushSub, savePushSub } from './push.ts'
+import { clearManualFix, publicManualFix, saveManualFix } from './manual-position.ts'
 import { startTripWatch } from './watch.ts'
 import { deletePhoto, listPhotos, readPhoto, savePhoto } from './photos.ts'
 
@@ -141,6 +143,52 @@ app.get('/api/status', (c) => {
   })
 })
 
+app.get('/api/manual-position', (c) => {
+  return c.json({ fix: publicManualFix() })
+})
+
+app.post('/api/manual-position', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    lat?: unknown
+    lng?: unknown
+    accuracyM?: unknown
+    postedBy?: unknown
+  } | null
+  const result = saveManualFix(body ?? {})
+  if (!result.ok) {
+    if (result.error === 'too_soon') return c.json({ error: 'too_soon' }, 429)
+    return c.json({ error: result.error }, 400)
+  }
+  const who = result.fix.postedBy
+  const acc =
+    result.fix.accuracyM != null ? ` (±${Math.round(result.fix.accuracyM)} m)` : ''
+  await addTimelineEvent({
+    kind: 'manual-position',
+    titleDe: 'Position von Bord gemeldet',
+    titleEn: 'Position reported from the ship',
+    detailDe: who ? `Von ${who}${acc}` : acc ? `GPS${acc}` : undefined,
+    detailEn: who ? `From ${who}${acc}` : acc ? `GPS${acc}` : undefined,
+  })
+  await notifyFamily(
+    'Position von Bord gemeldet',
+    who ? `${who} hat eine GPS-Position geschickt.` : 'Eine GPS-Position von Bord ist da.',
+    '/',
+    'cruise-manual-position',
+  )
+  return c.json({ fix: publicManualFix() })
+})
+
+app.delete('/api/manual-position', (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const cleared = clearManualFix()
+  return c.json({ ok: true, cleared })
+})
+
 app.post('/api/datadocked/interval', async (c) => {
   if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
     return c.json({ error: 'forbidden' }, 403)
@@ -149,6 +197,29 @@ app.post('/api/datadocked/interval', async (c) => {
   const hours = Number(body?.hours)
   if (!setIntervalHours(hours)) return c.json({ error: 'invalid_interval' }, 400)
   return c.json({ dataDocked: dataDockedStatus() })
+})
+
+app.post('/api/datadocked/fetch', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const trip = getStoredTrip()
+  const ship = trip ? tripShip(trip) : undefined
+  const result = await forceRefreshDataDocked(ship?.mmsi ?? '')
+  if (!result.ok) {
+    const http =
+      result.error === 'no_credits'
+        ? 429
+        : result.error === 'fetch_failed' || result.error === 'no_position'
+          ? 502
+          : 400
+    return c.json({ error: result.error, dataDocked: result.status }, http)
+  }
+  return c.json({
+    ok: true,
+    dataDocked: result.status,
+    lastFixAt: new Date(result.fix.ts).toISOString(),
+  })
 })
 
 app.get('/api/trip', (c) => {

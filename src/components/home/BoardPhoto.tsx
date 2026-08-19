@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { Camera, ImagePlus } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Camera, ImagePlus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { Locale } from '@shared/types.ts'
+import { formatSeen } from '@shared/time.ts'
+import { useAuth } from '@/lib/auth'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -9,30 +13,75 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
-type PhotoMeta = { at: string } | null
+const POSTER_STORAGE_KEY = 'board-photo-poster'
+
+type PhotoEntry = {
+  id: string
+  at: string
+  caption: string | null
+  postedBy: string | null
+}
 
 export function BoardPhoto() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const { isAdmin } = useAuth()
+  const locale = (i18n.language.startsWith('de') ? 'de' : 'en') as Locale
   const input = useRef<HTMLInputElement>(null)
-  const [meta, setMeta] = useState<PhotoMeta>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  const [photos, setPhotos] = useState<PhotoEntry[]>([])
+  const [index, setIndex] = useState(0)
+  const [postedBy, setPostedBy] = useState('')
+  const [caption, setCaption] = useState('')
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-    void fetch('/api/photos', { credentials: 'include' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { photo?: { at: string } | null } | null) => {
-        if (!cancelled) setMeta(data?.photo ?? null)
-      })
-      .catch(() => {
-        if (!cancelled) setMeta(null)
-      })
-    return () => {
-      cancelled = true
+  const loadPhotos = useCallback(async () => {
+    const res = await fetch('/api/photos', { credentials: 'include' })
+    if (!res.ok) {
+      setPhotos([])
+      return []
     }
+    const data = (await res.json()) as { photos?: PhotoEntry[] }
+    const rows = Array.isArray(data.photos) ? data.photos : []
+    setPhotos(rows)
+    return rows
   }, [])
+
+  useEffect(() => {
+    void loadPhotos().catch(() => setPhotos([]))
+  }, [loadPhotos])
+
+  useEffect(() => {
+    if (photos.length) return
+    const saved = localStorage.getItem(POSTER_STORAGE_KEY)
+    if (saved) setPostedBy(saved)
+  }, [photos.length])
+
+  const scrollTo = useCallback((next: number, smooth = false) => {
+    const el = scroller.current
+    if (!el?.clientWidth) return
+    const clamped = Math.max(0, Math.min(next, photos.length - 1))
+    el.scrollTo({ left: clamped * el.clientWidth, behavior: smooth ? 'smooth' : 'auto' })
+    setIndex(clamped)
+  }, [photos.length])
+
+  useEffect(() => {
+    if (!open || photos.length === 0) return
+    const target = photos.length - 1
+    setIndex(target)
+    requestAnimationFrame(() => scrollTo(target))
+  }, [open, photos.length, scrollTo])
+
+  const current = photos[index] ?? null
+  const newest = photos.at(-1) ?? null
+  const thumbSrc = newest ? photoSrc(newest) : null
+
+  function openDialog() {
+    setOpen(true)
+  }
 
   async function onFile(file: File | undefined) {
     if (!file || busy) return
@@ -41,16 +90,41 @@ export function BoardPhoto() {
       const blob = await compressPhoto(file)
       const body = new FormData()
       body.append('photo', blob, 'board.jpg')
+      if (postedBy.trim()) body.append('postedBy', postedBy.trim())
+      if (caption.trim()) body.append('caption', caption.trim())
       const res = await fetch('/api/photos', { method: 'POST', credentials: 'include', body })
       if (!res.ok) return
-      const data = (await res.json()) as { photo?: { at: string } }
-      setMeta(data.photo ?? { at: new Date().toISOString() })
+      const rows = await loadPhotos()
+      setCaption('')
+      if (postedBy.trim()) localStorage.setItem(POSTER_STORAGE_KEY, postedBy.trim())
+      const nextIndex = Math.max(0, rows.length - 1)
+      requestAnimationFrame(() => scrollTo(nextIndex, true))
     } finally {
       setBusy(false)
     }
   }
 
-  const src = meta ? `/api/photos/latest?at=${encodeURIComponent(meta.at)}` : null
+  async function deleteCurrent() {
+    if (!isAdmin || busy || !current) return
+    if (!window.confirm(t('photoDeleteConfirm'))) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/photos/${encodeURIComponent(current.id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) return
+      const rows = await loadPhotos()
+      if (!rows.length) {
+        setOpen(false)
+        return
+      }
+      const nextIndex = Math.min(index, rows.length - 1)
+      requestAnimationFrame(() => scrollTo(nextIndex))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <>
@@ -66,14 +140,19 @@ export function BoardPhoto() {
           void onFile(file)
         }}
       />
-      {src ? (
+      {thumbSrc ? (
         <Button
           variant="ghost"
-          className="size-14 min-h-11 shrink-0 overflow-hidden rounded-2xl p-0"
+          className="relative size-14 min-h-11 shrink-0 overflow-hidden rounded-2xl p-0"
           aria-label={t('photoOpen')}
-          onClick={() => setOpen(true)}
+          onClick={openDialog}
         >
-          <img src={src} alt="" className="size-full object-cover" />
+          <img src={thumbSrc} alt="" className="size-full object-cover" />
+          {photos.length > 1 ? (
+            <span className="absolute right-1 bottom-1 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground shadow-sm">
+              {photos.length}
+            </span>
+          ) : null}
         </Button>
       ) : (
         <Button
@@ -82,33 +161,120 @@ export function BoardPhoto() {
           className="size-14 shrink-0 rounded-2xl"
           aria-label={t('photoAdd')}
           disabled={busy}
-          onClick={() => input.current?.click()}
+          onClick={openDialog}
         >
           {busy ? <Camera className="h-5 w-5 animate-pulse" /> : <ImagePlus className="h-5 w-5" />}
         </Button>
       )}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="p-4 sm:p-6">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>{t('photoTitle')}</DialogTitle>
-            <DialogDescription>{t('photoHint')}</DialogDescription>
+            <DialogDescription>
+              {photos.length > 1 ? t('photoSwipe') : t('photoHint')}
+            </DialogDescription>
           </DialogHeader>
-          {src ? (
-            <img src={src} alt="" className="mt-3 max-h-[60dvh] w-full rounded-2xl object-contain" />
-          ) : null}
-          <Button
-            variant="secondary"
-            className="mt-4 w-full"
-            disabled={busy}
-            onClick={() => input.current?.click()}
-          >
-            <Camera className="h-4 w-4" />
-            {t('photoReplace')}
-          </Button>
+          <div className="mt-3 space-y-4">
+            {photos.length > 0 ? (
+              <>
+                <div
+                  ref={scroller}
+                  className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain"
+                  aria-label={t('photoSwipe')}
+                  onScroll={(event) => {
+                    const el = event.currentTarget
+                    if (!el.clientWidth) return
+                    setIndex(Math.round(el.scrollLeft / el.clientWidth))
+                  }}
+                >
+                  {photos.map((photo) => (
+                    <section
+                      key={photo.id}
+                      className="w-full shrink-0 snap-start basis-full space-y-3 pr-1"
+                      aria-label={formatSeen(photo.at, locale, true)}
+                    >
+                      <img
+                        src={photoSrc(photo)}
+                        alt=""
+                        className="max-h-[40dvh] w-full rounded-2xl object-contain"
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        {t('photoPostedAt')}{' '}
+                        <time dateTime={photo.at} className="font-medium tabular-nums text-foreground">
+                          {formatSeen(photo.at, locale, true)}
+                        </time>
+                      </p>
+                      {photo.postedBy ? (
+                        <p className="text-sm text-muted-foreground">
+                          {t('photoPostedBy')}{' '}
+                          <span className="font-medium text-foreground">{photo.postedBy}</span>
+                        </p>
+                      ) : null}
+                      {photo.caption ? (
+                        <p className="break-words text-sm leading-snug text-foreground">{photo.caption}</p>
+                      ) : null}
+                    </section>
+                  ))}
+                </div>
+                {photos.length > 1 ? (
+                  <p className="text-center text-xs text-muted-foreground" aria-live="polite">
+                    {t('photoCount', { current: index + 1, total: photos.length })}
+                  </p>
+                ) : null}
+                {isAdmin && current ? (
+                  <Button variant="destructive" className="w-full" disabled={busy} onClick={() => void deleteCurrent()}>
+                    <Trash2 className="h-4 w-4" />
+                    {t('photoDelete')}
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
+            <div className="space-y-3 border-t border-border/60 pt-4">
+              <p className="text-sm font-medium text-foreground">
+                {photos.length ? t('photoAddAnother') : t('photoAdd')}
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="board-photo-poster">{t('photoPostedBy')}</Label>
+                <Input
+                  id="board-photo-poster"
+                  value={postedBy}
+                  placeholder={t('photoPostedByPlaceholder')}
+                  autoComplete="name"
+                  onChange={(event) => setPostedBy(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="board-photo-caption">{t('photoCaption')}</Label>
+                <textarea
+                  id="board-photo-caption"
+                  value={caption}
+                  rows={3}
+                  placeholder={t('photoCaptionPlaceholder')}
+                  className={cn(
+                    'flex min-h-11 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-base text-foreground shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring md:text-sm',
+                  )}
+                  onChange={(event) => setCaption(event.target.value)}
+                />
+              </div>
+              <Button
+                variant="secondary"
+                className="w-full"
+                disabled={busy}
+                onClick={() => input.current?.click()}
+              >
+                <Camera className="h-4 w-4" />
+                {photos.length ? t('photoAddAnother') : t('photoAdd')}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </>
   )
+}
+
+function photoSrc(photo: PhotoEntry): string {
+  return `/api/photos/${encodeURIComponent(photo.id)}?at=${encodeURIComponent(photo.at)}`
 }
 
 async function compressPhoto(file: File): Promise<Blob> {

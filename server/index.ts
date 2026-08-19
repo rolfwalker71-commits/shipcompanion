@@ -26,7 +26,7 @@ import { buildSnapshot } from './snapshot.ts'
 import { listTimeline } from './timeline.ts'
 import { pushPublicKey, removePushSub, savePushSub } from './push.ts'
 import { startTripWatch } from './watch.ts'
-import { clearPhoto, photoMeta, readPhoto, savePhoto } from './photos.ts'
+import { deletePhoto, listPhotos, readPhoto, savePhoto } from './photos.ts'
 
 config()
 
@@ -204,12 +204,25 @@ app.post('/api/snapshot', async (c) => {
   }
 })
 
-app.get('/api/photos', (c) => {
-  return c.json({ photo: photoMeta() })
+app.get('/api/photos', async (c) => {
+  const photos = await listPhotos()
+  return c.json({ photos })
 })
 
 app.get('/api/photos/latest', async (c) => {
-  const bytes = await readPhoto()
+  const photos = await listPhotos()
+  const latest = photos.at(-1)
+  if (!latest) return c.body(null, 404)
+  const bytes = await readPhoto(latest.id)
+  if (!bytes) return c.body(null, 404)
+  c.header('Content-Type', 'image/jpeg')
+  c.header('Cache-Control', 'private, max-age=120')
+  return c.body(new Uint8Array(bytes))
+})
+
+app.get('/api/photos/:id', async (c) => {
+  const id = c.req.param('id')
+  const bytes = await readPhoto(id)
   if (!bytes) return c.body(null, 404)
   c.header('Content-Type', 'image/jpeg')
   c.header('Cache-Control', 'private, max-age=120')
@@ -221,13 +234,20 @@ app.post('/api/photos', async (c) => {
   const file = body?.photo
   if (!(file instanceof File)) return c.json({ error: 'missing_photo' }, 400)
   const buf = Buffer.from(await file.arrayBuffer())
-  const meta = await savePhoto(buf)
-  if (!meta) return c.json({ error: 'photo_too_large' }, 413)
-  return c.json({ photo: meta })
+  const photo = await savePhoto(buf, {
+    caption: body?.caption,
+    postedBy: body?.postedBy,
+  })
+  if (!photo) return c.json({ error: 'photo_too_large' }, 413)
+  return c.json({ photo })
 })
 
-app.delete('/api/photos', async (c) => {
-  await clearPhoto()
+app.delete('/api/photos/:id', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const ok = await deletePhoto(c.req.param('id'))
+  if (!ok) return c.json({ error: 'not_found' }, 404)
   return c.json({ ok: true })
 })
 

@@ -161,7 +161,8 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
   flex-direction: column;
   align-items: center;
   color: var(--foreground);
-  transform: translate(-50%, calc(-100% - 2px));
+  /* Push the whole label slightly higher so it doesn't cover the ship/berth marker. */
+  transform: translate(-50%, calc(-100% - 14px));
   filter: drop-shadow(0 1px 4px color-mix(in oklab, var(--foreground) 25%, transparent));
 }
 
@@ -193,17 +194,17 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 2px;
-  padding: 0.15rem 0.5rem 0.2rem;
+  margin-top: 1px;
+  padding: 0.1rem 0.45rem 0.15rem;
   border-radius: 9999px;
   background: color-mix(in oklab, var(--card) 90%, transparent);
 }
 
 .port-marker-label {
-  max-width: 8rem;
-  font-size: 0.75rem;
+  max-width: 6.5rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.15;
   text-align: center;
   overflow: hidden;
   display: -webkit-box;
@@ -214,9 +215,9 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
 }
 
 .port-marker-time {
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.15;
   white-space: nowrap;
   color: var(--muted-foreground);
 }

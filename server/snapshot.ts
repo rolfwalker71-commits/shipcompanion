@@ -104,15 +104,18 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
           : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
-  const nav = estimate
+  const navCandidate = estimate
     ? 'underway'
     : received
       ? navStateFromAis(received.navStatus, received.sog)
       : guessed.atPort
         ? 'moored'
         : 'unknown'
-  const berth = estimate ? null : pickBerth(body.stops, received, leg, guessed.atPort, nav)
+  const berth = estimate ? null : pickBerth(body.stops, received, leg, guessed.atPort, navCandidate)
   const atPort = Boolean(berth)
+  // If our itinerary says we're in port and berth detection succeeded, force "moored"
+  // even when stale AIS navStatus still says underway.
+  const nav = atPort ? 'moored' : navCandidate
   const shown = berth ?? next
   const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
   const following = berthIndex >= 0 ? (body.stops[berthIndex + 1] ?? null) : next
@@ -273,9 +276,11 @@ function pickBerth(
       .map((stop) => ({ stop, km: haversineKm(liveFix, stop) }))
       .filter((item) => item.km <= 8)
       .sort((a, b) => a.km - b.km)[0]?.stop ?? null
-  if (isStoppedNav(nav)) return nearest
-  if (isUnderwayNav(nav)) return null
   if (leg.previous && nearPort(liveFix, leg.previous)) return leg.previous
   if (leg.atPort && nearPort(liveFix, leg.next)) return leg.next
+  if (isStoppedNav(nav)) return nearest
+  // When we *expect* to be in port, don't discard berth detection solely because stale AIS
+  // still reports "underway". Otherwise we would stay stuck on interpolated routes.
+  if (isUnderwayNav(nav) && !scheduledAtPort) return null
   return nearest
 }

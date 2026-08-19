@@ -127,6 +127,12 @@ function persist(): void {
 }
 
 function remainingLocal(): number {
+  // Prefer the real credit balance from Data Docked when we have it.
+  // The UI and force-refresh should reflect the same source; otherwise we can get
+  // "credits available" in UI but "no_credits" in the fetch logic.
+  if (store.credits != null && Number.isFinite(store.credits)) {
+    return Math.max(0, Math.floor(store.credits))
+  }
   return Math.max(0, monthlyLimit() - store.used)
 }
 

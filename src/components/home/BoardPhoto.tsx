@@ -229,43 +229,45 @@ export function BoardPhoto() {
                 ) : null}
               </>
             ) : null}
-            <div className="space-y-3 border-t border-border/60 pt-4">
-              <p className="text-sm font-medium text-foreground">
-                {photos.length ? t('photoAddAnother') : t('photoAdd')}
-              </p>
-              <div className="space-y-1.5">
-                <Label htmlFor="board-photo-poster">{t('photoPostedBy')}</Label>
-                <Input
-                  id="board-photo-poster"
-                  value={postedBy}
-                  placeholder={t('photoPostedByPlaceholder')}
-                  autoComplete="name"
-                  onChange={(event) => setPostedBy(event.target.value)}
-                />
+            {isAdmin && (
+              <div className="space-y-3 border-t border-border/60 pt-4">
+                <p className="text-sm font-medium text-foreground">
+                  {photos.length ? t('photoAddAnother') : t('photoAdd')}
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="board-photo-poster">{t('photoPostedBy')}</Label>
+                  <Input
+                    id="board-photo-poster"
+                    value={postedBy}
+                    placeholder={t('photoPostedByPlaceholder')}
+                    autoComplete="name"
+                    onChange={(event) => setPostedBy(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="board-photo-caption">{t('photoCaption')}</Label>
+                  <textarea
+                    id="board-photo-caption"
+                    value={caption}
+                    rows={3}
+                    placeholder={t('photoCaptionPlaceholder')}
+                    className={cn(
+                      'flex min-h-11 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-base text-foreground shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring md:text-sm',
+                    )}
+                    onChange={(event) => setCaption(event.target.value)}
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  disabled={busy}
+                  onClick={() => input.current?.click()}
+                >
+                  <Camera className="h-4 w-4" />
+                  {photos.length ? t('photoAddAnother') : t('photoAdd')}
+                </Button>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="board-photo-caption">{t('photoCaption')}</Label>
-                <textarea
-                  id="board-photo-caption"
-                  value={caption}
-                  rows={3}
-                  placeholder={t('photoCaptionPlaceholder')}
-                  className={cn(
-                    'flex min-h-11 w-full resize-y rounded-xl border border-input bg-background px-3 py-2 text-base text-foreground shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring md:text-sm',
-                  )}
-                  onChange={(event) => setCaption(event.target.value)}
-                />
-              </div>
-              <Button
-                variant="secondary"
-                className="w-full"
-                disabled={busy}
-                onClick={() => input.current?.click()}
-              >
-                <Camera className="h-4 w-4" />
-                {photos.length ? t('photoAddAnother') : t('photoAdd')}
-              </Button>
-            </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

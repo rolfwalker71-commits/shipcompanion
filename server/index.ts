@@ -301,6 +301,7 @@ app.get('/api/photos/:id', async (c) => {
 })
 
 app.post('/api/photos', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') return c.json({ error: 'forbidden' }, 403)
   const body = await c.req.parseBody().catch(() => null)
   const file = body?.photo
   if (!(file instanceof File)) return c.json({ error: 'missing_photo' }, 400)

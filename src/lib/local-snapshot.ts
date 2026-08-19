@@ -12,18 +12,21 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
 
   const atPort = guessed.atPort
   const dest = guessed.next
+  const berthIndex = atPort ? trip.stops.findIndex((stop) => stop.id === dest.id) : -1
+  const following = berthIndex >= 0 ? (trip.stops[berthIndex + 1] ?? null) : null
+  const destination = following ?? dest
   const shownStop = atPort ? dest : (leg.previous ?? dest)
   const loc = (stop: { name: string; nameDe: string }) => (locale === 'de' ? stop.nameDe : stop.name)
-  const arrival = formatWhen(dest.arriveAt, locale, true)
+  const arrival = formatWhen(destination.arriveAt, locale, true)
   const fromPort = !atPort && leg.previous ? loc(leg.previous) : null
   const narrative =
     atPort
       ? locale === 'de'
-        ? `${ship.name} liegt in ${loc(dest)}.`
-        : `${ship.name} is in ${loc(dest)}.`
+        ? `${ship.name} liegt in ${loc(dest)}. Nächster Hafen: ${loc(destination)} (Ankunft ${arrival}).`
+        : `${ship.name} is in ${loc(dest)}. Next port: ${loc(destination)} (arrival ${arrival}).`
       : locale === 'de'
-        ? `${ship.name} ist unterwegs nach ${loc(dest)}${fromPort ? ` von ${fromPort}` : ''}. Ankunft ${arrival}.`
-        : `${ship.name} is on the way to ${loc(dest)}${fromPort ? ` from ${fromPort}` : ''}. Arrival ${arrival}.`
+        ? `${ship.name} ist unterwegs nach ${loc(destination)}${fromPort ? ` von ${fromPort}` : ''}. Ankunft ${arrival}.`
+        : `${ship.name} is on the way to ${loc(destination)}${fromPort ? ` from ${fromPort}` : ''}. Arrival ${arrival}.`
 
   return {
     position: { ...guessed.point, source: 'approx' },
@@ -38,10 +41,10 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
     },
     voyage: null,
     nextPort: {
-      name: loc(dest),
-      arriveAt: dest.arriveAt,
-      lat: dest.lat,
-      lng: dest.lng,
+      name: loc(destination),
+      arriveAt: destination.arriveAt,
+      lat: destination.lat,
+      lng: destination.lng,
       atPort,
       berthName: atPort ? loc(dest) : null,
       departAt: atPort ? dest.departAt : null,
@@ -52,7 +55,7 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
       actual: null,
     },
     fromPort,
-    distanceKm: !atPort ? Math.round(haversineKm(guessed.point, dest)) : null,
+    distanceKm: !atPort ? Math.round(haversineKm(guessed.point, destination)) : null,
     weather: null,
     sun: sunTimes(guessed.point.lat, guessed.point.lng),
     shipTz: tzFromLongitude(guessed.point.lng),
@@ -60,7 +63,7 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
     path: routePath(trip.stops),
     track: [],
     gap: [],
-    forecast: forecastPath(null, guessed.point, dest, atPort),
+    forecast: forecastPath(null, guessed.point, destination, atPort),
     dataDocked: null,
   }
 }

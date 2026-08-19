@@ -35,6 +35,9 @@ const DEFAULT_MONTHLY_LIMIT = 250
 let store = readJsonSync<Store>('datadocked.json', emptyStore())
 let inflight: Promise<DockedFix | null> | null = null
 let startupFetchPending = true
+let gapFetchAt: number | null = null
+let lastFailAt: number | null = null
+const FAIL_BACKOFF_MS = 5 * 60 * 1000
 
 function apiKey(): string {
   return process.env.DATADOCKED_API_KEY?.trim() ?? ''
@@ -166,22 +169,23 @@ function apiHeaders(): { accept: string; 'x-api-key': string } {
   return { accept: 'application/json', 'x-api-key': apiKey() }
 }
 
-/** Spend a credit when coastal AIS is stale, or when we still have no stored SAT/TER fix. */
+/** Spend a credit only when coastal AIS is quiet. Never burn credits while AIS is fresh. */
 export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean): Promise<DockedFix | null> {
   if (!apiKey() || !mmsi) return store.lastFix
   rollMonth()
-  const startup = startupFetchPending
-  const needFix = store.lastFix == null
-  if ((startup || needFix) && store.credits == null) {
+  if (store.credits == null) {
     await refreshCredits().catch(() => {})
   }
-  if (aisFresh && !needFix) return store.lastFix
-  if (remainingLocal() <= 0) return store.lastFix
-  if (store.credits === 0) return store.lastFix
-  if (!needFix && !startup && store.lastFetchAt && Date.now() - store.lastFetchAt < intervalMs()) {
+  if (aisFresh) {
+    gapFetchAt = null
+    startupFetchPending = false
     return store.lastFix
   }
-  if (!startup && store.lastAttemptAt && Date.now() - store.lastAttemptAt < 15 * 60 * 1000) {
+  if (remainingLocal() <= 0) return store.lastFix
+  if (store.credits === 0) return store.lastFix
+  if (lastFailAt && Date.now() - lastFailAt < FAIL_BACKOFF_MS) return store.lastFix
+  // First quiet-AIS check after boot may fetch once; after that respect the interval.
+  if (!startupFetchPending && gapFetchAt && Date.now() - gapFetchAt < intervalMs()) {
     return store.lastFix
   }
   if (inflight) return inflight
@@ -207,6 +211,7 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
     if (!response.ok) {
       const text = await response.text()
       store.lastError = parseError(text) || `HTTP ${response.status}`
+      lastFailAt = Date.now()
       persist()
       console.warn('Data Docked error:', store.lastError)
       return store.lastFix
@@ -219,10 +224,13 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
     store.lastError = fix ? null : parseMiss(data)
     if (fix) {
       store.lastFix = fix
+      lastFailAt = null
+      gapFetchAt = Date.now()
       console.log(
         `DataDocked ${fix.source} ${new Date(fix.ts).toISOString()} ${fix.lat.toFixed(3)},${fix.lng.toFixed(3)}`,
       )
     } else {
+      lastFailAt = Date.now()
       console.warn('Data Docked no position:', store.lastError)
     }
     persist()
@@ -231,6 +239,7 @@ async function fetchLocation(mmsi: string): Promise<DockedFix | null> {
   } catch (error) {
     store.lastAttemptAt = Date.now()
     store.lastError = error instanceof Error ? error.message : 'network_error'
+    lastFailAt = Date.now()
     persist()
     console.warn('Data Docked error:', store.lastError)
     return store.lastFix

@@ -76,7 +76,6 @@ export function StatusStrip({
   }
 
   const atPort = snapshot.nextPort.atPort
-  const here = atPort ? snapshot.nextPort.berthName ?? snapshot.nextPort.name : snapshot.nextPort.name
   const nav = snapshot.motion?.nav ?? (atPort ? 'moored' : 'unknown')
   const navLabel =
     nav === 'moored'
@@ -90,10 +89,23 @@ export function StatusStrip({
             : atPort
               ? t('navMoored')
               : null
+  const mooredAt = atPort
+    ? snapshot.nextPort.berthName ?? snapshot.departure?.portName ?? snapshot.nextPort.name
+    : null
+  const nextName = snapshot.nextPort.name
+  const showNextLeg = Boolean(mooredAt && nextName && nextName !== mooredAt)
   const fromName = !atPort ? snapshot.fromPort : null
-  const pocName = here
-  const departure = fromName && snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale) : null
+  const pocName = nextName
+  const departure =
+    snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale) : null
   const arrival = formatArrivalParts(snapshot.nextPort.arriveAt, locale)
+  const routeAria = mooredAt
+    ? showNextLeg
+      ? `${mooredAt}. ${t('continuesTo', { name: nextName })}`
+      : mooredAt
+    : fromName
+      ? `${fromName} → ${pocName}`
+      : pocName
   const sourceLabel =
     snapshot.seenSource === 'ais'
       ? t('signalAis')
@@ -118,7 +130,7 @@ export function StatusStrip({
     <Card className="pointer-events-auto w-full overflow-visible px-3 py-2 shadow-xl ring-0 sm:px-4 sm:py-3">
       <div
         ref={scroller}
-        className="no-scrollbar flex items-start snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain transition-[height] duration-200 ease-out"
+        className="no-scrollbar flex items-start snap-x snap-mandatory overflow-x-auto overscroll-x-contain transition-[height] duration-200 ease-out"
         style={pageHeight != null ? { height: pageHeight } : undefined}
         onScroll={(event) => {
           const el = event.currentTarget
@@ -132,10 +144,10 @@ export function StatusStrip({
               <Badge
                 className={
                   live
-                    ? 'gap-1.5 bg-accent px-2 py-0.5 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
+                    ? 'gap-1.5 bg-accent px-2 py-1 text-xs text-primary-foreground sm:px-3 sm:py-1 sm:text-sm'
                     : estimated
-                      ? 'gap-1.5 bg-primary/10 px-2 py-0.5 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
-                      : 'px-2 py-0.5 text-xs sm:px-3 sm:py-1 sm:text-sm'
+                      ? 'gap-1.5 bg-primary/10 px-2 py-1 text-xs text-primary sm:px-3 sm:py-1 sm:text-sm'
+                      : 'px-2 py-1 text-xs sm:px-3 sm:py-1 sm:text-sm'
                 }
               >
                 {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
@@ -144,14 +156,14 @@ export function StatusStrip({
               {sourceLabel || seenTime ? (
                 <div className="mt-1.5 flex flex-col items-center gap-0.5 text-center">
                   {sourceLabel ? (
-                    <p className="flex items-center gap-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+                    <p className="flex items-center gap-0.5 text-xs font-medium leading-none text-muted-foreground">
                       <RadioTower className="h-3 w-3 text-sky-700" aria-hidden />
                       {sourceLabel}
                     </p>
                   ) : null}
                   {seenTime ? (
                     <p
-                      className="tabular-nums text-[10px] leading-none text-muted-foreground"
+                      className="tabular-nums text-xs leading-none text-muted-foreground"
                       title={seenIso ? formatSeen(seenIso, locale) : undefined}
                     >
                       {seenTime}
@@ -160,32 +172,48 @@ export function StatusStrip({
                 </div>
               ) : null}
             </div>
-            <div
-              className="min-w-0 flex-1"
-              aria-label={fromName ? `${fromName} → ${pocName}` : pocName}
-            >
-              {fromName ? (
+            <div className="min-w-0 flex-1" aria-label={routeAria}>
+              {mooredAt ? (
                 <>
-                  <p className="flex min-w-0 items-center gap-4 text-base font-semibold leading-tight sm:text-lg">
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />
-                      <span className="min-w-0 truncate">{fromName}</span>
-                    </span>
-                    {departure ? <ScheduleStamp label={t('departLabel')} parts={departure} /> : null}
+                  <p className="flex min-w-0 items-start gap-1.5 text-base font-semibold leading-snug sm:text-lg">
+                    <MapPinned className="mt-0.5 h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
+                    <span className="min-w-0 break-words">{mooredAt}</span>
                   </p>
-                  <ArrowDown
-                    className="my-0.5 ml-0.5 h-4 w-4 text-muted-foreground sm:ml-1 sm:h-5 sm:w-5"
-                    aria-hidden
+                  {showNextLeg ? (
+                    <div className="mt-1 min-w-0 space-y-0.5 text-xs leading-snug text-muted-foreground sm:text-sm">
+                      <p>{t('continuesTo', { name: nextName })}</p>
+                      {departure || arrival ? (
+                        <p>
+                          {departure ? <ScheduleInline label={t('departLabel')} parts={departure} /> : null}
+                          {departure && arrival ? ' · ' : null}
+                          {arrival ? <ScheduleInline label={t('arrival')} parts={arrival} /> : null}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  {fromName ? (
+                    <>
+                      <RouteRow
+                        icon={<Ship className="h-4 w-4 shrink-0 fill-sky-100 text-sky-700 sm:h-5 sm:w-5" aria-hidden />}
+                        name={fromName}
+                        schedule={departure ? <ScheduleStamp label={t('departLabel')} parts={departure} /> : null}
+                      />
+                      <ArrowDown
+                        className="my-0.5 ml-0.5 h-4 w-4 text-muted-foreground sm:ml-1 sm:h-5 sm:w-5"
+                        aria-hidden
+                      />
+                    </>
+                  ) : null}
+                  <RouteRow
+                    icon={<MapPinned className="h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />}
+                    name={pocName}
+                    schedule={arrival ? <ScheduleStamp label={t('arrival')} parts={arrival} /> : null}
                   />
                 </>
-              ) : null}
-              <p className="flex min-w-0 items-center gap-4 text-base font-semibold leading-tight sm:text-lg">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <MapPinned className="h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />
-                  <span className="min-w-0 truncate">{pocName}</span>
-                </span>
-                {arrival ? <ScheduleStamp label={t('arrival')} parts={arrival} /> : null}
-              </p>
+              )}
             </div>
             {snapshot.weather ? (
               <div
@@ -211,40 +239,49 @@ export function StatusStrip({
           <TodayPanel snapshot={snapshot} locale={locale} stops={stops} />
         </section>
       </div>
-      <div className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
+      <div className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 pt-1">
         <div className="flex min-w-0 justify-start">
           {navLabel ? (
-            <Badge className={cn('w-auto max-w-full min-w-0 overflow-hidden px-2 py-0.5 text-[10px] sm:px-3 sm:py-1 sm:text-xs', navBadgeClass(nav))}>
-              <span className="truncate">{navLabel}</span>
+            <Badge className={cn('w-auto max-w-full min-w-0 px-2 py-1 text-xs sm:px-3 sm:py-1', navBadgeClass(nav))}>
+              <span className="break-words leading-snug">{navLabel}</span>
             </Badge>
           ) : null}
         </div>
-        <div className="flex justify-center" role="tablist" aria-label={t('statusPages')}>
+        <div
+          role="tablist"
+          aria-label={t('statusPages')}
+          className="flex h-14 min-h-14 items-stretch rounded-full bg-muted p-1.5"
+        >
           {Array.from({ length: PAGE_COUNT }, (_, index) => (
             <Button
               key={index}
               variant="ghost"
-              size="icon"
               role="tab"
               aria-label={index === 0 ? t('facts') : t('today')}
               aria-selected={page === index}
+              className={cn(
+                'h-full min-h-0 max-h-full rounded-full px-3 py-0 text-xs font-medium leading-none sm:px-4 sm:text-sm',
+                page === index
+                  ? 'bg-background text-foreground shadow-sm hover:bg-background/90'
+                  : 'text-muted-foreground hover:bg-muted/80',
+              )}
               onClick={() => goTo(index)}
             >
-              <span className={cn('size-2 rounded-full', page === index ? 'bg-foreground' : 'bg-muted-foreground/40')} />
+              {index === 0 ? t('facts') : t('today')}
             </Button>
           ))}
         </div>
         <Button
           variant="ghost"
-          className="h-auto min-h-11 min-w-0 flex-col items-end justify-center gap-0 whitespace-normal px-1 py-1 text-right leading-tight"
+          className="h-auto min-h-11 min-w-0 flex-col items-end justify-center gap-0 whitespace-normal px-1 py-1 text-right leading-snug"
           onClick={() => setFactsOpen(true)}
           aria-label={t('shipFacts')}
         >
           {shipName ? (
-            <span className="block truncate text-[10px] font-semibold text-foreground sm:text-xs">{shipName}</span>
+            <span className="block break-words text-xs font-semibold text-foreground sm:text-sm">{shipName}</span>
           ) : null}
           {lineName ? (
-            <span className="block truncate text-[10px] text-muted-foreground sm:text-xs">{lineName}</span>
+            <span className="block break-words text-xs text-muted-foreground sm:text-sm">{lineName}</span>
           ) : null}
         </Button>
       </div>
@@ -297,11 +334,14 @@ export function TelemetryBar({ snapshot, locale }: { snapshot: SnapshotResponse 
     <Card className="pointer-events-auto w-full px-2 py-2 shadow-xl ring-0 sm:px-3 sm:py-2.5" aria-label={t('telemetry')}>
       <div className="flex divide-x divide-border/60">
         {items.map((item) => (
-          <div key={item.label} className="flex min-w-0 flex-1 items-center justify-center gap-2 px-3 py-2.5">
+          <div
+            key={item.label}
+            className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-2 py-2 sm:flex-row sm:gap-2 sm:px-3 sm:py-2.5"
+          >
             <span className="shrink-0">{item.icon}</span>
             <span
               className={cn(
-                'truncate text-sm font-medium sm:text-base',
+                'text-center break-words text-xs font-medium leading-snug sm:text-sm',
                 item.muted ? 'text-muted-foreground' : 'text-foreground',
               )}
             >
@@ -320,6 +360,43 @@ type Metric = {
   muted?: boolean
 }
 
+function RouteRow({
+  icon,
+  name,
+  schedule,
+}: {
+  icon: React.ReactNode
+  name: string
+  schedule: React.ReactNode
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-start sm:gap-4">
+      <span className="flex min-w-0 items-start gap-1.5 text-base font-semibold leading-snug sm:text-lg">
+        <span className="mt-0.5 shrink-0">{icon}</span>
+        <span className="min-w-0 break-words">{name}</span>
+      </span>
+      {schedule}
+    </div>
+  )
+}
+
+function ScheduleInline({
+  label,
+  parts,
+}: {
+  label: string
+  parts: ReturnType<typeof formatArrivalParts>
+}) {
+  return (
+    <span>
+      {label}{' '}
+      <span className="font-medium tabular-nums text-foreground/80">
+        {parts.day} {parts.time} {parts.offset}
+      </span>
+    </span>
+  )
+}
+
 function ScheduleStamp({
   label,
   parts,
@@ -328,7 +405,7 @@ function ScheduleStamp({
   parts: ReturnType<typeof formatArrivalParts>
 }) {
   return (
-    <span className="shrink-0 text-xs font-medium leading-tight text-muted-foreground sm:text-sm">
+    <span className="text-xs font-medium leading-snug text-muted-foreground sm:text-sm">
       {label} {parts.day}{' '}
       <span className="font-semibold tabular-nums text-foreground">
         {parts.time} {parts.offset}

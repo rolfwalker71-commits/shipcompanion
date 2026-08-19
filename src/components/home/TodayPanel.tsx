@@ -86,7 +86,7 @@ function JourneyBand({
 
   return (
     <div className="min-w-0">
-      <p className="mb-1 text-[10px] font-medium text-muted-foreground sm:text-xs">{dayLabel}</p>
+      <p className="mb-1 text-xs font-medium text-muted-foreground">{dayLabel}</p>
       <ol
         className="flex min-h-11 items-center gap-1 overflow-x-auto overscroll-x-contain pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label={t('journeyBand')}
@@ -101,7 +101,7 @@ function JourneyBand({
               : currentName === name
           const past = now > depart && !current
           return (
-            <li key={stop.id} className="flex min-w-8 flex-1 flex-col items-center gap-0.5">
+            <li key={stop.id} className="flex min-w-10 flex-1 flex-col items-center gap-0.5 sm:min-w-12">
               <span
                 className={cn(
                   'size-2.5 rounded-full',
@@ -109,8 +109,9 @@ function JourneyBand({
                 )}
               />
               <span
+                title={name}
                 className={cn(
-                  'max-w-14 truncate text-center text-[10px] leading-none',
+                  'line-clamp-2 max-w-16 break-words text-center text-xs leading-tight sm:max-w-20',
                   current ? 'font-semibold text-foreground' : 'text-muted-foreground',
                 )}
               >

@@ -1,7 +1,7 @@
 import type { AisNavState, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
 import { estimatedPosition, estimateUnderway, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
-import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail } from './ais.ts'
+import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
 import {
   dataDockedConfigured,
   dataDockedError,
@@ -38,16 +38,18 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
   const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
-  const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 4000) : lastKnownPosition(body.mmsi)
+  // Give AISStream time to open + deliver before deciding we need a paid fallback.
+  const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 12_000) : lastKnownPosition(body.mmsi)
   const aisFix = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
-  const liveMs = 45 * 60 * 1000
-  const aisAge = aisFix ? now.getTime() - aisFix.ts : Number.POSITIVE_INFINITY
-  const aisLive = Boolean(aisFix) && aisAge < liveMs
-  const dockedFix =
-    (await refreshDataDockedIfNeeded(body.mmsi, aisLive).catch(() => lastDataDockedFix())) ?? lastDataDockedFix()
-  const received = pickReceivedFix(aisFix, dockedFix)
+  const aisLive = Boolean(livePosition(body.mmsi, AIS_LIVE_MS))
+  // After reconnect/boot, wait a few minutes for coastal AIS before spending credits.
+  const skipPaidFetch = aisConfigured() && (aisLive || aisFallbackGraceActive())
+  const dockedFix = skipPaidFetch
+    ? lastDataDockedFix()
+    : ((await refreshDataDockedIfNeeded(body.mmsi, aisLive).catch(() => lastDataDockedFix())) ?? lastDataDockedFix())
+  const received = pickReceivedFix(aisFix, dockedFix, now.getTime(), AIS_LIVE_MS)
   const receivedAge = received ? now.getTime() - received.ts : Number.POSITIVE_INFINITY
-  const receivedLive = Boolean(received) && receivedAge < liveMs
+  const receivedLive = Boolean(received) && receivedAge < AIS_LIVE_MS
   const guessed = estimatedPosition(body.stops, now, received)
   if (!guessed) return { error: 'no_route', status: 400 }
 
@@ -148,7 +150,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   return {
     position,
     tracking,
-    seenAt: aisFix ? new Date(aisFix.ts).toISOString() : null,
+    seenAt: received ? new Date(received.ts).toISOString() : null,
     seenSource: received?.fromDocked ? 'datadocked' : received ? 'ais' : null,
     motion: {
       nav,
@@ -197,12 +199,17 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   }
 }
 
-function pickReceivedFix(ais: LiveFix | null, docked: DockedFix | null): ReceivedFix | null {
+function pickReceivedFix(
+  ais: LiveFix | null,
+  docked: DockedFix | null,
+  now: number,
+  liveMs: number,
+): ReceivedFix | null {
+  const aisFresh = Boolean(ais && now - ais.ts < liveMs)
+  if (aisFresh && ais) return { ...ais, fromDocked: false }
   if (!docked) return ais ? { ...ais, fromDocked: false } : null
   if (!ais) return { ...docked, fromDocked: true }
-  if (docked.ts > ais.ts + 60_000) return { ...docked, fromDocked: true }
-  if (haversineKm(ais, docked) > 2 && docked.ts + 5 * 60_000 >= ais.ts) return { ...docked, fromDocked: true }
-  return ais.ts >= docked.ts ? { ...ais, fromDocked: false } : { ...docked, fromDocked: true }
+  return docked.ts > ais.ts ? { ...docked, fromDocked: true } : { ...ais, fromDocked: false }
 }
 
 function buildGap(

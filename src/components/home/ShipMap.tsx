@@ -146,7 +146,7 @@ function MapStyleToggle({ style, onChange }: { style: MapStyle; onChange: (next:
     <div
       role="group"
       aria-label={t('mapStyle')}
-      className="pointer-events-auto flex overflow-hidden rounded-xl border border-border bg-card/90 shadow-lg backdrop-blur-md"
+      className="pointer-events-auto flex h-14 min-h-14 items-stretch rounded-full bg-card/90 p-1.5 shadow-lg backdrop-blur-md"
     >
       <Button
         variant="ghost"
@@ -154,8 +154,10 @@ function MapStyleToggle({ style, onChange }: { style: MapStyle; onChange: (next:
         aria-pressed={style === 'voyager'}
         aria-label={t('mapVoyager')}
         className={cn(
-          'min-h-11 gap-1.5 rounded-none px-3',
-          style === 'voyager' && 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground',
+          'h-full min-h-0 max-h-full gap-1.5 rounded-full px-3 py-0 leading-none',
+          style === 'voyager'
+            ? 'bg-background text-foreground shadow-sm hover:bg-background/90'
+            : 'text-muted-foreground hover:bg-muted/80',
         )}
         onClick={() => onChange('voyager')}
       >
@@ -168,8 +170,10 @@ function MapStyleToggle({ style, onChange }: { style: MapStyle; onChange: (next:
         aria-pressed={style === 'satellite'}
         aria-label={t('mapSatellite')}
         className={cn(
-          'min-h-11 gap-1.5 rounded-none px-3',
-          style === 'satellite' && 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground',
+          'h-full min-h-0 max-h-full gap-1.5 rounded-full px-3 py-0 leading-none',
+          style === 'satellite'
+            ? 'bg-background text-foreground shadow-sm hover:bg-background/90'
+            : 'text-muted-foreground hover:bg-muted/80',
         )}
         onClick={() => onChange('satellite')}
       >

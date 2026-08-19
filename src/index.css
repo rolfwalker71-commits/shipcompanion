@@ -200,10 +200,16 @@ input[type='date'][data-empty='true']:not(:focus)::-webkit-datetime-edit {
 }
 
 .port-marker-label {
+  max-width: 8rem;
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.2;
-  white-space: nowrap;
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
   color: var(--foreground);
 }
 

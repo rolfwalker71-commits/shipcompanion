@@ -17,14 +17,14 @@ export function AppHeader({ onOpenSettings, onOpenTimeline }: AppHeaderProps) {
     <header className="absolute inset-x-0 top-0 z-30 flex items-center justify-between gap-2 border-b border-border bg-card/90 pt-[env(safe-area-inset-top)] pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] backdrop-blur-md sm:pr-6 sm:pl-6">
       <div className="flex min-h-14 min-w-0 items-center gap-2 sm:gap-3">
         <Ship className="h-5 w-5 shrink-0 fill-sky-100 text-sky-700 sm:h-6 sm:w-6" aria-hidden />
-        <h1 className="truncate text-base font-semibold tracking-tight sm:text-xl">{t('appName')}</h1>
+        <h1 className="break-words text-base font-semibold leading-tight tracking-tight sm:text-xl">{t('appName')}</h1>
         {import.meta.env.DEV ? (
           <span className="shrink-0 rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground">
             DEV
           </span>
         ) : null}
       </div>
-      <div className="flex min-h-14 shrink-0 items-center gap-0.5 sm:gap-1">
+      <div className="flex min-h-14 shrink-0 items-center gap-1.5 sm:gap-2">
         <Button
           variant="ghost"
           size="icon"

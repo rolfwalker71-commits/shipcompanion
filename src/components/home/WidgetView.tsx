@@ -19,7 +19,11 @@ export function WidgetView({ trip }: WidgetViewProps) {
   const speedKmh = formatSpeedKmh(snapshot?.motion?.sogKn)
   const nextName = snapshot?.nextPort.name
   const atPort = snapshot?.nextPort.atPort ?? false
-  const here = atPort ? snapshot?.nextPort.berthName ?? nextName : nextName
+  const mooredAt = atPort
+    ? snapshot?.nextPort.berthName ?? snapshot?.departure?.portName ?? nextName
+    : null
+  const showNextLeg = Boolean(mooredAt && nextName && nextName !== mooredAt)
+  const headline = mooredAt ?? nextName
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-muted px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[calc(3.5rem+env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -30,19 +34,35 @@ export function WidgetView({ trip }: WidgetViewProps) {
           </p>
         ) : (
           <>
-            <div className="flex items-center gap-2">
+            <div className="min-w-0">
               <Badge
                 className={
                   live
-                    ? 'shrink-0 bg-accent px-2 py-0.5 text-xs text-primary-foreground'
+                    ? 'mb-1.5 w-max bg-accent px-2 py-1 text-xs text-primary-foreground'
                     : estimated
-                      ? 'shrink-0 bg-primary/10 px-2 py-0.5 text-xs text-primary'
-                      : 'shrink-0 px-2 py-0.5 text-xs'
+                      ? 'mb-1.5 w-max bg-primary/10 px-2 py-1 text-xs text-primary'
+                      : 'mb-1.5 w-max px-2 py-1 text-xs'
                 }
               >
                 {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
               </Badge>
-              <p className="min-w-0 truncate text-lg font-semibold">{here}</p>
+              <p className="break-words text-lg font-semibold leading-snug">{headline}</p>
+              {showNextLeg ? (
+                <div className="mt-1 space-y-0.5 text-sm leading-snug text-muted-foreground">
+                  <p>{t('continuesTo', { name: nextName })}</p>
+                  {snapshot.departure?.planned || snapshot.nextPort.arriveAt ? (
+                    <p>
+                      {snapshot.departure?.planned ? (
+                        <>{t('departLabel')} {formatWhen(snapshot.departure.planned, locale, !compact)}</>
+                      ) : null}
+                      {snapshot.departure?.planned && snapshot.nextPort.arriveAt ? ' · ' : null}
+                      {snapshot.nextPort.arriveAt ? (
+                        <>{t('arrival')} {formatWhen(snapshot.nextPort.arriveAt, locale, !compact)}</>
+                      ) : null}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <p className="text-base leading-relaxed">{snapshot.narrative || t('narrativeEmpty')}</p>
             <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -82,12 +102,10 @@ export function WidgetView({ trip }: WidgetViewProps) {
                   {t('speedKmh', { speed: formatSpeedLabel(speedKmh, locale) })}
                 </Badge>
               ) : null}
-              {nextName ? (
+              {nextName && !showNextLeg ? (
                 <Badge className="gap-1.5 px-2.5 py-1 text-sm">
                   <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                  {atPort
-                    ? `${nextName} • ${formatWhen(snapshot.nextPort.arriveAt, locale, !compact)}`
-                    : `${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, !compact)}`}
+                  {`${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, !compact)}`}
                 </Badge>
               ) : null}
             </div>

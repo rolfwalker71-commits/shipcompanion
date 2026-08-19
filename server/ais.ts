@@ -57,6 +57,8 @@ const LEFT_PIER_KM = 0.8
 const MOVING_KNOTS = 2.5
 const MIN_TRAIL_KM = 0.8
 const MAX_TRAIL = 600
+export const AIS_LIVE_MS = 20 * 60 * 1000
+const AIS_SILENCE_MS = 12 * 60 * 1000
 const MESSAGE_TYPES = [
   'PositionReport',
   'StandardClassBPositionReport',
@@ -69,8 +71,14 @@ const tripStops = new Map<string, PortStop[]>()
 let socket: WebSocket | null = null
 const watched = new Set<string>()
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let connecting = false
 let lastError: string | null = null
+let lastAisMessageAt = 0
+let socketOpenedAt = 0
 let cacheReady: Promise<void> | null = null
+/** After connect, wait this long for coastal AIS before spending a Data Docked credit. */
+export const AIS_FALLBACK_GRACE_MS = 3 * 60 * 1000
 
 function apiKey(): string {
   return process.env.AISSTREAM_API_KEY?.trim() ?? ''
@@ -288,21 +296,65 @@ function subscribe(): void {
   )
 }
 
+function startHeartbeat(): void {
+  if (heartbeatTimer) return
+  heartbeatTimer = setInterval(() => {
+    if (watched.size === 0 || !apiKey()) {
+      stopHeartbeat()
+      return
+    }
+    if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+      connect()
+      return
+    }
+    if (socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.ping()
+      } catch {
+        socket.close()
+        return
+      }
+    }
+    if (lastAisMessageAt > 0 && Date.now() - lastAisMessageAt > AIS_SILENCE_MS) {
+      console.warn('AISStream silent for 12 minutes, reconnecting')
+      lastAisMessageAt = Date.now()
+      socket.close()
+    }
+  }, 30_000)
+}
+
+function stopHeartbeat(): void {
+  if (!heartbeatTimer) return
+  clearInterval(heartbeatTimer)
+  heartbeatTimer = null
+}
+
 function connect(): void {
   const key = apiKey()
   if (!key || watched.size === 0) return
+  if (connecting) return
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
     return
   }
 
+  connecting = true
   lastError = null
-  socket = new WebSocket('wss://stream.aisstream.io/v0/stream')
+  const next = new WebSocket('wss://stream.aisstream.io/v0/stream')
+  socket = next
 
-  socket.on('open', () => {
+  next.on('open', () => {
+    if (socket !== next) return
+    connecting = false
+    lastError = null
+    lastAisMessageAt = Date.now()
+    socketOpenedAt = Date.now()
+    console.log(`AISStream connected, watching ${[...watched].join(',') || 'none'}`)
     subscribe()
+    startHeartbeat()
   })
 
-  socket.on('message', (raw) => {
+  next.on('message', (raw) => {
+    if (socket !== next) return
     try {
       const payload = JSON.parse(String(raw)) as {
         error?: string
@@ -326,6 +378,9 @@ function connect(): void {
         console.warn('AISStream error:', payload.error)
         return
       }
+
+      lastError = null
+      lastAisMessageAt = Date.now()
 
       const staticData = payload.Message?.ShipStaticData
       const report =
@@ -366,22 +421,29 @@ function connect(): void {
         cog: readCog(report.Cog ?? report.COG),
         heading: readHeading(report.TrueHeading),
       })
+      if (watched.has(mmsi)) {
+        console.log(`AIS ${mmsi} ${lat.toFixed(3)},${lng.toFixed(3)}`)
+      }
     } catch {
       // ignore malformed AIS frames
     }
   })
 
-  socket.on('close', () => {
-    socket = null
-    if (watched.size === 0 || !apiKey()) return
-    reconnectTimer ??= setTimeout(() => {
-      reconnectTimer = null
-      connect()
-    }, 5000)
+  next.on('close', () => {
+    if (socket === next) {
+      socket = null
+      connecting = false
+      stopHeartbeat()
+      if (watched.size === 0 || !apiKey()) return
+      reconnectTimer ??= setTimeout(() => {
+        reconnectTimer = null
+        connect()
+      }, 5000)
+    }
   })
 
-  socket.on('error', () => {
-    socket?.close()
+  next.on('error', () => {
+    if (socket === next) next.close()
   })
 }
 
@@ -397,7 +459,7 @@ export function watchMmsi(mmsi: string, stops: PortStop[] = []): void {
   subscribe()
 }
 
-export function livePosition(mmsi: string, maxAgeMs = 20 * 60 * 1000): LiveFix | null {
+export function livePosition(mmsi: string, maxAgeMs = AIS_LIVE_MS): LiveFix | null {
   const track = tracks.get(mmsi)
   const fix = track?.aisFix ?? track?.fix
   if (!fix) return null
@@ -428,6 +490,7 @@ export function actualDeparture(mmsi: string, stopId: string): number | null {
 
 export async function waitForLive(mmsi: string, timeoutMs = 5000): Promise<LiveFix | null> {
   await (cacheReady ??= loadCache())
+  if (!socket || socket.readyState === WebSocket.CLOSED) connect()
   const existing = livePosition(mmsi)
   if (existing) return existing
   const started = Date.now()
@@ -435,13 +498,22 @@ export async function waitForLive(mmsi: string, timeoutMs = 5000): Promise<LiveF
     await new Promise((resolve) => setTimeout(resolve, 250))
     const fix = livePosition(mmsi)
     if (fix) return fix
-    if (lastError) return lastKnownPosition(mmsi)
   }
   return livePosition(mmsi) ?? lastKnownPosition(mmsi)
 }
 
 export function aisConfigured(): boolean {
   return apiKey().length > 0
+}
+
+export function aisConnected(): boolean {
+  return Boolean(socket && socket.readyState === WebSocket.OPEN)
+}
+
+/** True while we still expect coastal AIS after a fresh websocket connect. */
+export function aisFallbackGraceActive(): boolean {
+  if (!apiKey() || !socketOpenedAt) return false
+  return Date.now() - socketOpenedAt < AIS_FALLBACK_GRACE_MS
 }
 
 export function aisError(): string | null {

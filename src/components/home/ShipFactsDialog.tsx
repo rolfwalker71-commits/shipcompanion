@@ -58,7 +58,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="truncate font-semibold leading-snug text-foreground">{value}</dd>
+      <dd className="break-words font-semibold leading-snug text-foreground">{value}</dd>
     </div>
   )
 }

@@ -26,7 +26,15 @@ import { getStoredTrip, parseTrip, saveStoredTrip } from './trip-store.ts'
 import { buildSnapshot } from './snapshot.ts'
 import { addTimelineEvent, listTimeline } from './timeline.ts'
 import { notifyFamily, pushPublicKey, removePushSub, savePushSub } from './push.ts'
-import { clearManualFix, publicManualFix, saveManualFix } from './manual-position.ts'
+import {
+  archiveActiveRoute,
+  clearManualFix,
+  getActiveRoute,
+  getArchiveById,
+  getArchives,
+  publicManualFix,
+  saveManualFix,
+} from './manual-position.ts'
 import { startTripWatch } from './watch.ts'
 import { deletePhoto, listPhotos, readPhoto, savePhoto } from './photos.ts'
 
@@ -187,6 +195,39 @@ app.delete('/api/manual-position', (c) => {
   }
   const cleared = clearManualFix()
   return c.json({ ok: true, cleared })
+})
+
+app.get('/api/manual-position/route', (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  return c.json({ points: getActiveRoute() })
+})
+
+app.get('/api/manual-position/archive', (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  return c.json({ archives: getArchives() })
+})
+
+app.post('/api/manual-position/archive', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null
+  const result = archiveActiveRoute(body?.name)
+  if (!result.ok) return c.json({ error: result.error }, 400)
+  return c.json({ archive: { id: result.archive.id, name: result.archive.name, createdAt: result.archive.createdAt, pointCount: result.archive.points.length } })
+})
+
+app.get('/api/manual-position/archive/:id', (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const archive = getArchiveById(c.req.param('id'))
+  if (!archive) return c.json({ error: 'not_found' }, 404)
+  return c.json({ archive })
 })
 
 app.post('/api/datadocked/interval', async (c) => {

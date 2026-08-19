@@ -6,6 +6,9 @@ export const MANUAL_LIVE_MS = 6 * 60 * 60 * 1000
 const RATE_LIMIT_MS = 5 * 60 * 1000
 const MAX_ACCURACY_M = 5000
 const MAX_POSTED_BY = 80
+const MAX_ROUTE_POINTS = 500
+const MAX_ARCHIVES = 50
+const MAX_ARCHIVE_NAME = 120
 
 export type ManualFix = {
   lat: number
@@ -15,11 +18,28 @@ export type ManualFix = {
   postedBy: string | null
 }
 
+export type RoutePoint = {
+  lat: number
+  lng: number
+  ts: number
+  accuracyM: number | null
+  postedBy: string | null
+}
+
+export type RouteArchive = {
+  id: string
+  name: string | null
+  createdAt: number
+  points: RoutePoint[]
+}
+
 export type SaveManualResult =
   | { ok: true; fix: ManualFix }
   | { ok: false; error: 'invalid_coords' | 'invalid_accuracy' | 'too_soon' }
 
 let store = readStored()
+let activeRoute: RoutePoint[] = readJsonSync<RoutePoint[]>('manual-position-route.json', [])
+let archives: RouteArchive[] = readJsonSync<RouteArchive[]>('manual-position-archive.json', [])
 
 function readStored(): ManualFix | null {
   const raw = readJsonSync<ManualFix | null>('manual-position.json', null)
@@ -38,6 +58,14 @@ function persist(): void {
   void writeJson('manual-position.json', store)
 }
 
+function persistRoute(): void {
+  void writeJson('manual-position-route.json', activeRoute)
+}
+
+function persistArchives(): void {
+  void writeJson('manual-position-archive.json', archives)
+}
+
 function cleanText(value: unknown, maxLen: number): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim().slice(0, maxLen)
@@ -50,6 +78,40 @@ export function lastManualFix(): ManualFix | null {
 
 export function manualIsFresh(fix: ManualFix | null = store, now = Date.now()): boolean {
   return Boolean(fix && now - fix.ts < MANUAL_LIVE_MS)
+}
+
+export function getActiveRoute(): RoutePoint[] {
+  return activeRoute
+}
+
+export function getArchives(): Omit<RouteArchive, 'points'>[] {
+  return archives.map(({ id, name, createdAt, points }) => ({
+    id,
+    name,
+    createdAt,
+    pointCount: points.length,
+    startAt: points[0]?.ts ?? null,
+    endAt: points.at(-1)?.ts ?? null,
+  })) as unknown as Omit<RouteArchive, 'points'>[]
+}
+
+export function getArchiveById(id: string): RouteArchive | null {
+  return archives.find((a) => a.id === id) ?? null
+}
+
+export function archiveActiveRoute(name: unknown): { ok: true; archive: RouteArchive } | { ok: false; error: string } {
+  if (activeRoute.length === 0) return { ok: false, error: 'empty_route' }
+  const archive: RouteArchive = {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: cleanText(name, MAX_ARCHIVE_NAME),
+    createdAt: Date.now(),
+    points: [...activeRoute],
+  }
+  archives = [archive, ...archives].slice(0, MAX_ARCHIVES)
+  persistArchives()
+  activeRoute = []
+  persistRoute()
+  return { ok: true, archive }
 }
 
 export function saveManualFix(input: {
@@ -78,14 +140,14 @@ export function saveManualFix(input: {
     return { ok: false, error: 'too_soon' }
   }
 
-  store = {
-    lat,
-    lng,
-    ts: now,
-    accuracyM,
-    postedBy: cleanText(input.postedBy, MAX_POSTED_BY),
-  }
+  const postedBy = cleanText(input.postedBy, MAX_POSTED_BY)
+  store = { lat, lng, ts: now, accuracyM, postedBy }
   persist()
+
+  const point: RoutePoint = { lat, lng, ts: now, accuracyM, postedBy }
+  activeRoute = [...activeRoute, point].slice(-MAX_ROUTE_POINTS)
+  persistRoute()
+
   armSkipNextDockedFetch()
   return { ok: true, fix: store }
 }

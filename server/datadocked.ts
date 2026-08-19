@@ -25,6 +25,10 @@ type Store = {
   lastMmsi: string | null
   lastFix: DockedFix | null
   intervalHours: number | null
+  /** One-shot: skip the next scheduled fetch after an onboard GPS report. */
+  skipNextDockedFetch: boolean
+  skipArmedAt: number | null
+  skippedDockedFetchAt: number | null
 }
 
 const BASE = 'https://datadocked.com/api/vessels_operations'
@@ -96,6 +100,9 @@ function emptyStore(): Store {
     lastMmsi: null,
     lastFix: null,
     intervalHours: null,
+    skipNextDockedFetch: false,
+    skipArmedAt: null,
+    skippedDockedFetchAt: null,
   }
 }
 
@@ -109,6 +116,9 @@ function rollMonth(): void {
     lastFix: store.lastFix,
     lastMmsi: store.lastMmsi,
     intervalHours: store.intervalHours,
+    skipNextDockedFetch: store.skipNextDockedFetch,
+    skipArmedAt: store.skipArmedAt,
+    skippedDockedFetchAt: store.skippedDockedFetchAt,
   }
 }
 
@@ -124,8 +134,9 @@ function nextFetchTs(): number | null {
   if (!apiKey()) return null
   if (remainingLocal() <= 0) return nextMonthTs()
   if (store.credits === 0) return null
-  if (!store.lastFetchAt) return Date.now()
-  return store.lastFetchAt + intervalMs()
+  const lastSlot = Math.max(store.lastFetchAt ?? 0, store.skippedDockedFetchAt ?? 0)
+  if (!lastSlot) return Date.now()
+  return lastSlot + intervalMs()
 }
 
 function nextMonthTs(): number {
@@ -180,6 +191,38 @@ function apiHeaders(): { accept: string; 'x-api-key': string } {
   return { accept: 'application/json', 'x-api-key': apiKey() }
 }
 
+/** After a manual GPS report, skip at most one upcoming paid fetch (not a multi-hour blanket). */
+export function armSkipNextDockedFetch(): void {
+  rollMonth()
+  store.skipNextDockedFetch = true
+  store.skipArmedAt = Date.now()
+  persist()
+}
+
+function clearSkipArm(): void {
+  store.skipNextDockedFetch = false
+  store.skipArmedAt = null
+}
+
+/** Consume a skip only when a fetch would run. Expire after one DD interval from arming. */
+function consumeSkipIfArmed(): boolean {
+  if (!store.skipNextDockedFetch) return false
+  const armedAt = store.skipArmedAt ?? 0
+  const stillInWindow = armedAt > 0 && Date.now() - armedAt < intervalMs()
+  if (!stillInWindow) {
+    clearSkipArm()
+    persist()
+    return false
+  }
+  clearSkipArm()
+  store.skippedDockedFetchAt = Date.now()
+  gapFetchAt = Date.now()
+  startupFetchPending = false
+  persist()
+  console.log('DataDocked skip-once after manual GPS')
+  return true
+}
+
 /** Spend a credit only when coastal AIS is quiet. Never burn credits while AIS is fresh. */
 export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean): Promise<DockedFix | null> {
   if (!apiKey() || !mmsi) return store.lastFix
@@ -197,6 +240,9 @@ export async function refreshDataDockedIfNeeded(mmsi: string, aisFresh: boolean)
   if (lastFailAt && Date.now() - lastFailAt < FAIL_BACKOFF_MS) return store.lastFix
   // First quiet-AIS check after boot may fetch once; after that respect the interval.
   if (!startupFetchPending && gapFetchAt && Date.now() - gapFetchAt < intervalMs()) {
+    return store.lastFix
+  }
+  if (consumeSkipIfArmed()) {
     return store.lastFix
   }
   if (inflight) {
@@ -250,6 +296,7 @@ async function fetchLocation(mmsi: string): Promise<FetchOutcome> {
     })
     store.lastAttemptAt = Date.now()
     store.lastMmsi = mmsi
+    clearSkipArm()
 
     if (!response.ok) {
       const text = await response.text()

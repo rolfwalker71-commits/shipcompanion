@@ -1,5 +1,7 @@
+import { armSkipNextDockedFetch } from './datadocked.ts'
 import { readJsonSync, writeJson } from './persist.ts'
 
+/** Display / last-known window for onboard GPS. Must not gate Data Docked fetches. */
 export const MANUAL_LIVE_MS = 6 * 60 * 60 * 1000
 const RATE_LIMIT_MS = 5 * 60 * 1000
 const MAX_ACCURACY_M = 5000
@@ -84,6 +86,7 @@ export function saveManualFix(input: {
     postedBy: cleanText(input.postedBy, MAX_POSTED_BY),
   }
   persist()
+  armSkipNextDockedFetch()
   return { ok: true, fix: store }
 }
 

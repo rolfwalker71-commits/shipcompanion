@@ -14,7 +14,7 @@ import { narrate } from './narrate.ts'
 import { sunTimes, tzFromLongitude } from '../shared/sun.ts'
 import type { DockedFix } from './datadocked.ts'
 import type { LiveFix } from './ais.ts'
-import { lastManualFix, MANUAL_LIVE_MS, manualIsFresh, type ManualFix } from './manual-position.ts'
+import { lastManualFix, MANUAL_LIVE_MS, type ManualFix } from './manual-position.ts'
 
 type ReceivedFix = {
   lat: number
@@ -47,9 +47,8 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const manualFix = lastManualFix()
   const nowMs = now.getTime()
   // After reconnect/boot, wait a few minutes for coastal AIS before spending credits.
-  // A fresh onboard GPS report also skips Data Docked until it ages past MANUAL_LIVE_MS.
-  const skipPaidFetch =
-    (aisConfigured() && (aisLive || aisFallbackGraceActive())) || manualIsFresh(manualFix, nowMs)
+  // Manual GPS may skip at most one scheduled Data Docked fetch (armed in refreshDataDockedIfNeeded).
+  const skipPaidFetch = aisConfigured() && (aisLive || aisFallbackGraceActive())
   const dockedFix = skipPaidFetch
     ? lastDataDockedFix()
     : ((await refreshDataDockedIfNeeded(body.mmsi, aisLive).catch(() => lastDataDockedFix())) ?? lastDataDockedFix())

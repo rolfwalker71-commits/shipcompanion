@@ -11,7 +11,7 @@ function cacheKey(mmsi: string): string {
 
 function readCached(mmsi: string): SnapshotResponse | null {
   try {
-    const raw = sessionStorage.getItem(cacheKey(mmsi))
+    const raw = localStorage.getItem(cacheKey(mmsi)) ?? sessionStorage.getItem(cacheKey(mmsi))
     if (!raw) return null
     return JSON.parse(raw) as SnapshotResponse
   } catch {
@@ -21,7 +21,7 @@ function readCached(mmsi: string): SnapshotResponse | null {
 
 function writeCached(mmsi: string, snapshot: SnapshotResponse): void {
   try {
-    sessionStorage.setItem(cacheKey(mmsi), JSON.stringify(snapshot))
+    localStorage.setItem(cacheKey(mmsi), JSON.stringify(snapshot))
   } catch {
     /* quota */
   }

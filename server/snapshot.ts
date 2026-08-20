@@ -40,8 +40,8 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
   const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
-  // Give AISStream time to open + deliver before deciding we need a paid fallback.
-  const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 12_000) : lastKnownPosition(body.mmsi)
+  // Use cache immediately. Only wait briefly when we have never seen this MMSI.
+  const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 1_500) : lastKnownPosition(body.mmsi)
   const aisFix = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
   const aisLive = Boolean(livePosition(body.mmsi, AIS_LIVE_MS))
   const manualFix = lastManualFix()

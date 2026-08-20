@@ -493,6 +493,9 @@ export async function waitForLive(mmsi: string, timeoutMs = 5000): Promise<LiveF
   if (!socket || socket.readyState === WebSocket.CLOSED) connect()
   const existing = livePosition(mmsi)
   if (existing) return existing
+  // Last known from disk is enough for the first paint; do not stall the UI for a live frame.
+  const known = lastKnownPosition(mmsi)
+  if (known) return known
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 250))
@@ -510,9 +513,11 @@ export function aisConnected(): boolean {
   return Boolean(socket && socket.readyState === WebSocket.OPEN)
 }
 
-/** True while we still expect coastal AIS after a fresh websocket connect. */
+/** True while the AIS websocket is still opening or just opened. */
 export function aisFallbackGraceActive(): boolean {
-  if (!apiKey() || !socketOpenedAt) return false
+  if (!apiKey()) return false
+  if (connecting || socket?.readyState === WebSocket.CONNECTING) return true
+  if (!socketOpenedAt) return false
   return Date.now() - socketOpenedAt < AIS_FALLBACK_GRACE_MS
 }
 

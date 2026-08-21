@@ -1,4 +1,4 @@
-import type { AisNavState, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
+import type { AisNavState, SeenSource, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
 import { estimatedPosition, estimateUnderway, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
 import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
@@ -9,6 +9,13 @@ import {
   lastDataDockedFix,
   refreshDataDockedIfNeeded,
 } from './datadocked.ts'
+import {
+  lastVesselsFix,
+  refreshVesselsIfNeeded,
+  vesselsApiStatus,
+  vesselsConfigured,
+  vesselsLiveMs,
+} from './vessels-api.ts'
 import { fetchWeather } from './weather.ts'
 import { narrate } from './narrate.ts'
 import { sunTimes, tzFromLongitude } from '../shared/sun.ts'
@@ -24,8 +31,8 @@ type ReceivedFix = {
   cog?: number | null
   heading?: number | null
   navStatus?: number | null
-  fromDocked: boolean
-  fromManual: boolean
+  source: SeenSource
+  liveMs: number
 }
 
 export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResponse | { error: string; status: 400 }> {
@@ -34,35 +41,36 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   }
 
   watchMmsi(body.mmsi, body.stops)
+  await refreshVesselsIfNeeded().catch(() => {})
   const now = new Date()
   const leg = findLeg(body.stops, now)
   if (!leg) return { error: 'no_route', status: 400 }
 
   const weatherStop = leg.previous && !leg.atPort ? leg.previous : leg.next
   const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
-  // Use cache immediately. Only wait briefly when we have never seen this MMSI.
   const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 1_500) : lastKnownPosition(body.mmsi)
   const aisFix = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
   const aisLive = Boolean(livePosition(body.mmsi, AIS_LIVE_MS))
-  const manualFix = lastManualFix()
+  const vesselsFix = lastVesselsFix(body.mmsi)
+  const vesselsFresh = Boolean(vesselsFix && Date.now() - vesselsFix.ts < vesselsLiveMs())
+  const manualFix = lastManualFix(body.mmsi)
   const nowMs = now.getTime()
-  // After reconnect/boot, wait a few minutes for coastal AIS before spending credits.
-  // Manual GPS may skip at most one scheduled Data Docked fetch (armed in refreshDataDockedIfNeeded).
-  const skipPaidFetch = aisConfigured() && (aisLive || aisFallbackGraceActive())
+  const skipPaidFetch = aisLive || vesselsFresh || (aisConfigured() && aisFallbackGraceActive())
   const dockedFix = skipPaidFetch
-    ? lastDataDockedFix()
-    : ((await refreshDataDockedIfNeeded(body.mmsi, aisLive).catch(() => lastDataDockedFix())) ?? lastDataDockedFix())
-  const received = pickReceivedFix(aisFix, dockedFix, manualFix, nowMs, AIS_LIVE_MS)
+    ? lastDataDockedFix(body.mmsi)
+    : ((await refreshDataDockedIfNeeded(body.mmsi, aisLive || vesselsFresh).catch(() => lastDataDockedFix(body.mmsi))) ??
+      lastDataDockedFix(body.mmsi))
+  const received = pickReceivedFix(aisFix, vesselsFix, dockedFix, manualFix, nowMs)
   const receivedAge = received ? nowMs - received.ts : Number.POSITIVE_INFINITY
-  const receivedLive = Boolean(received) && receivedAge < AIS_LIVE_MS
+  const receivedLive = Boolean(received && receivedAge < received.liveMs)
   const manualLastKnown =
-    Boolean(received?.fromManual) && !receivedLive && receivedAge < MANUAL_LIVE_MS
+    Boolean(received?.source === 'manual') && !receivedLive && receivedAge < MANUAL_LIVE_MS
   const guessed = estimatedPosition(body.stops, now, received)
   if (!guessed) return { error: 'no_route', status: 400 }
 
   const streamError = aisError()
   const dockedError = dataDockedError()
-  const hasTracker = aisConfigured() || dataDockedConfigured()
+  const hasTracker = aisConfigured() || dataDockedConfigured() || vesselsConfigured()
   const estimate =
     !receivedLive && !manualLastKnown && received && !guessed.atPort
       ? estimateUnderway(
@@ -123,11 +131,11 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
   const streamVoyage = voyageOf(body.mmsi)
   const aisDestination = resolveAisDestination(
-    streamVoyage?.destination ?? dockedFix?.destination ?? null,
+    streamVoyage?.destination ?? vesselsFix?.destination ?? dockedFix?.destination ?? null,
     body.stops,
     body.locale,
   )
-  const voyageEta = streamVoyage?.eta ?? dockedFix?.eta ?? null
+  const voyageEta = streamVoyage?.eta ?? vesselsFix?.eta ?? dockedFix?.eta ?? null
   const voyage =
     aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
   const weather =
@@ -161,8 +169,8 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     position,
     tracking,
     seenAt: received ? new Date(received.ts).toISOString() : null,
-    seenSource: received?.fromManual ? 'manual' : received?.fromDocked ? 'datadocked' : received ? 'ais' : null,
-    seenAccuracyM: received?.fromManual ? (manualFix?.accuracyM ?? null) : null,
+    seenSource: received?.source ?? null,
+    seenAccuracyM: received?.source === 'manual' ? (manualFix?.accuracyM ?? null) : null,
     motion: {
       nav,
       sogKn: estimate?.sogKn ?? received?.sog ?? null,
@@ -207,29 +215,32 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
           lastError: dockedStatus.lastError,
         }
       : null,
+    vesselsApi: vesselsConfigured() ? vesselsApiStatus() : null,
   }
 }
 
 function pickReceivedFix(
   ais: LiveFix | null,
+  vessels: LiveFix | null,
   docked: DockedFix | null,
   manual: ManualFix | null,
   now: number,
-  liveMs: number,
 ): ReceivedFix | null {
-  const aisFresh = Boolean(ais && now - ais.ts < liveMs)
-  if (aisFresh && ais) return toReceived(ais, 'ais')
   const candidates: ReceivedFix[] = []
-  if (ais) candidates.push(toReceived(ais, 'ais'))
-  if (docked) candidates.push(toReceived(docked, 'datadocked'))
-  if (manual) candidates.push(toReceived(manual, 'manual'))
+  if (ais) candidates.push(toReceived(ais, 'ais', AIS_LIVE_MS))
+  if (vessels) candidates.push(toReceived(vessels, 'vessels', vesselsLiveMs()))
+  if (docked) candidates.push(toReceived(docked, 'datadocked', AIS_LIVE_MS))
+  if (manual) candidates.push(toReceived(manual, 'manual', MANUAL_LIVE_MS))
   if (!candidates.length) return null
-  return candidates.reduce((newest, row) => (row.ts > newest.ts ? row : newest))
+  const live = candidates.filter((row) => now - row.ts < row.liveMs)
+  const pool = live.length ? live : candidates
+  return pool.reduce((newest, row) => (row.ts > newest.ts ? row : newest))
 }
 
 function toReceived(
   fix: { lat: number; lng: number; ts: number; sog?: number | null; cog?: number | null; heading?: number | null; navStatus?: number | null },
-  source: 'ais' | 'datadocked' | 'manual',
+  source: SeenSource,
+  liveMs: number,
 ): ReceivedFix {
   return {
     lat: fix.lat,
@@ -239,8 +250,8 @@ function toReceived(
     cog: fix.cog ?? null,
     heading: fix.heading ?? null,
     navStatus: fix.navStatus ?? null,
-    fromDocked: source === 'datadocked',
-    fromManual: source === 'manual',
+    source,
+    liveMs,
   }
 }
 

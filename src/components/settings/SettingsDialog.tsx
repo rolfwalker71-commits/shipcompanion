@@ -16,21 +16,45 @@ import { useTheme, type Theme } from '@/lib/theme'
 import { useAuth } from '@/lib/auth'
 import { ManualPositionDialog } from '@/components/home/ManualPositionDialog'
 import { disablePush, enablePush, notificationState, pushSupported } from '@/lib/push'
-import type { DataDockedStatus } from '@shared/types.ts'
+import type { DataDockedStatus, Trip, VesselsApiStatus } from '@shared/types.ts'
+import { tripKey, tripShip } from '@shared/ships.ts'
 
 type SettingsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  ships?: Trip[]
+  selectedId?: string | null
+  selectedMmsi?: string
+  onSelectShip?: (id: string) => void
+  onAddShip?: () => void
   onEditTrip: () => void
+  onRemoveShip?: (id: string) => void | Promise<void>
 }
 
-export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  ships = [],
+  selectedId = null,
+  selectedMmsi = '',
+  onSelectShip,
+  onAddShip,
+  onEditTrip,
+  onRemoveShip,
+}: SettingsDialogProps) {
   const { t, i18n } = useTranslation()
   const { theme, setTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
   const [lang, setLang] = useState(i18n.language.startsWith('de') ? 'de' : 'en')
   const [trackerOn, setTrackerOn] = useState(false)
   const [dataDocked, setDataDocked] = useState<DataDockedStatus | null>(null)
+  const [vesselsApi, setVesselsApi] = useState<VesselsApiStatus | null>(null)
+  const [vesselsMinutes, setVesselsMinutes] = useState('30')
+  const [vesselsBusy, setVesselsBusy] = useState(false)
+  const [vesselsMsg, setVesselsMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
+  const [vesselsFetchBusy, setVesselsFetchBusy] = useState(false)
+  const [vesselsFetchMsg, setVesselsFetchMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
+  const [removeBusy, setRemoveBusy] = useState<string | null>(null)
   const [intervalHours, setIntervalHours] = useState('3')
   const [intervalBusy, setIntervalBusy] = useState(false)
   const [intervalMsg, setIntervalMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
@@ -55,22 +79,30 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     if (!open) return
     void fetch('/api/status', { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: { aisConfigured?: boolean; dataDocked?: DataDockedStatus } | null) => {
+      .then((data: { aisConfigured?: boolean; dataDocked?: DataDockedStatus; vesselsApi?: VesselsApiStatus } | null) => {
         setTrackerOn(Boolean(data?.aisConfigured))
         setDataDocked(data?.dataDocked ?? null)
+        setVesselsApi(data?.vesselsApi ?? null)
         if (data?.dataDocked?.intervalHours) {
           setIntervalHours(String(data.dataDocked.intervalHours === 1 ? 1 : 3))
         }
+        if (data?.vesselsApi?.intervalMinutes) {
+          setVesselsMinutes(String(data.vesselsApi.intervalMinutes === 60 ? 60 : 30))
+        }
         setIntervalMsg(null)
         setFetchMsg(null)
+        setVesselsMsg(null)
+        setVesselsFetchMsg(null)
       })
       .catch(() => {
         setTrackerOn(false)
         setDataDocked(null)
+        setVesselsApi(null)
       })
     void notificationState().then(setPush)
     if (isAdmin) {
-      void fetch('/api/manual-position', { credentials: 'include' })
+      const qs = selectedMmsi ? `?mmsi=${encodeURIComponent(selectedMmsi)}` : ''
+      void fetch(`/api/manual-position${qs}`, { credentials: 'include' })
         .then((res) => (res.ok ? res.json() : null))
         .then(
           (data: {
@@ -82,7 +114,7 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
         )
         .catch(() => setLastManual(null))
     }
-  }, [open, isAdmin])
+  }, [open, isAdmin, selectedMmsi])
 
   const locale = lang === 'en' ? 'en' : 'de'
 
@@ -100,6 +132,62 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     }
     const when = dataDocked.nextFetchAt ? formatWhen(dataDocked.nextFetchAt, locale) : t('trackingDockedSoon')
     return `${credits} ${t('trackingDockedInterval', { hours: dataDocked.intervalHours })} ${t('trackingDockedNext', { when })}`
+  }
+
+  function vesselsLine(): string {
+    if (!vesselsApi?.configured) return t('trackingVesselsOff')
+    if (vesselsApi.lastError) {
+      return t('trackingVesselsError', { error: vesselsApi.lastError })
+    }
+    const when = vesselsApi.nextFetchAt ? formatWhen(vesselsApi.nextFetchAt, locale) : t('trackingDockedSoon')
+    return t('trackingVesselsOn', { minutes: vesselsApi.intervalMinutes, when, count: vesselsApi.vesselCount })
+  }
+
+  function saveVesselsInterval() {
+    setVesselsBusy(true)
+    setVesselsMsg(null)
+    void fetch('/api/vessels/interval', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minutes: Number(vesselsMinutes) }),
+    })
+      .then(async (res) => {
+        if (res.status === 403) {
+          setVesselsMsg('forbidden')
+          return
+        }
+        if (!res.ok) {
+          setVesselsMsg('bad')
+          return
+        }
+        const data = (await res.json()) as { vesselsApi?: VesselsApiStatus }
+        if (data.vesselsApi) setVesselsApi(data.vesselsApi)
+        setVesselsMsg('ok')
+      })
+      .catch(() => setVesselsMsg('bad'))
+      .finally(() => setVesselsBusy(false))
+  }
+
+  function fetchVesselsNow() {
+    setVesselsFetchBusy(true)
+    setVesselsFetchMsg(null)
+    void fetch('/api/vessels/fetch', { method: 'POST', credentials: 'include' })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as { vesselsApi?: VesselsApiStatus } | null
+        if (data?.vesselsApi) setVesselsApi(data.vesselsApi)
+        if (res.status === 403) {
+          setVesselsFetchMsg('forbidden')
+          return
+        }
+        if (!res.ok) {
+          setVesselsFetchMsg('bad')
+          return
+        }
+        setVesselsFetchMsg('ok')
+      })
+      .catch(() => setVesselsFetchMsg('bad'))
+      .finally(() => setVesselsFetchBusy(false))
   }
 
   function saveInterval() {
@@ -134,6 +222,8 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     void fetch('/api/datadocked/fetch', {
       method: 'POST',
       credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mmsi: selectedMmsi || undefined }),
     })
       .then(async (res) => {
         const data = (await res.json().catch(() => null)) as {
@@ -166,7 +256,7 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
   function clearManual() {
     setClearBusy(true)
     setClearMsg(null)
-    void fetch('/api/manual-position', { method: 'DELETE', credentials: 'include' })
+    void fetch(`/api/manual-position${selectedMmsi ? `?mmsi=${encodeURIComponent(selectedMmsi)}` : ''}`, { method: 'DELETE', credentials: 'include' })
       .then((res) => {
         if (res.status === 403) {
           setClearMsg('forbidden')
@@ -194,6 +284,53 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
         <div className="mt-4 flex flex-col gap-4">
           {isAdmin ? (
             <>
+              <div className="space-y-2">
+                <p className="text-sm font-medium leading-snug">{t('fleetTitle')}</p>
+                <p className="text-sm leading-relaxed text-muted-foreground">{t('fleetHint')}</p>
+                <div className="flex flex-col gap-2">
+                  {ships.map((row) => {
+                    const id = tripKey(row)
+                    const name = tripShip(row)?.name ?? row.shipId
+                    const active = id === selectedId
+                    return (
+                      <div key={id} className="flex items-center gap-2">
+                        <Button
+                          variant={active ? 'default' : 'secondary'}
+                          className="min-w-0 flex-1 justify-start"
+                          onClick={() => onSelectShip?.(id)}
+                        >
+                          {name}
+                        </Button>
+                        {onRemoveShip && ships.length > 1 ? (
+                          <Button
+                            variant="destructive"
+                            className="shrink-0"
+                            disabled={removeBusy === id}
+                            onClick={() => {
+                              setRemoveBusy(id)
+                              void Promise.resolve(onRemoveShip(id)).finally(() => setRemoveBusy(null))
+                            }}
+                          >
+                            {t('fleetRemove')}
+                          </Button>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+                {onAddShip ? (
+                  <Button
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => {
+                      onOpenChange(false)
+                      onAddShip()
+                    }}
+                  >
+                    {t('fleetAdd')}
+                  </Button>
+                ) : null}
+              </div>
               <div className="space-y-2">
                 <p className="text-sm font-medium leading-snug">{t('manualPositionTitle')}</p>
                 <p className="text-sm leading-relaxed text-muted-foreground">{t('manualPositionSettingsHint')}</p>
@@ -239,10 +376,60 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
               </div>
               <div className="space-y-1">
                 <p className="text-sm leading-relaxed text-muted-foreground">
+                  {vesselsLine()}
+                </p>
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   {trackerOn ? t('trackingLive') : t('trackingOff')}
                 </p>
                 <p className="text-sm leading-relaxed text-muted-foreground">{dataDockedLine()}</p>
               </div>
+              {vesselsApi?.configured ? (
+                <div className="space-y-2">
+                  <Label htmlFor="vessels-interval">{t('vesselsInterval')}</Label>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{t('vesselsIntervalHint')}</p>
+                  <Select value={vesselsMinutes} onValueChange={setVesselsMinutes} disabled={vesselsBusy}>
+                    <SelectTrigger id="vessels-interval" aria-label={t('vesselsInterval')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="30">{t('vesselsInterval30')}</SelectItem>
+                      <SelectItem value="60">{t('vesselsInterval60')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="secondary" className="w-full" disabled={vesselsBusy} onClick={saveVesselsInterval}>
+                    {t('vesselsIntervalSave')}
+                  </Button>
+                  {vesselsMsg === 'ok' ? (
+                    <p className="text-sm text-foreground" role="status">
+                      {t('vesselsIntervalSaved')}
+                    </p>
+                  ) : null}
+                  {vesselsMsg && vesselsMsg !== 'ok' ? (
+                    <p className="text-sm text-destructive" role="alert">
+                      {vesselsMsg === 'forbidden' ? t('settingsForbidden') : t('tripSaveFailed')}
+                    </p>
+                  ) : null}
+                  <p className="text-sm leading-relaxed text-muted-foreground">{t('vesselsFetchHint')}</p>
+                  <Button
+                    variant="default"
+                    className="w-full whitespace-normal"
+                    disabled={vesselsFetchBusy}
+                    onClick={fetchVesselsNow}
+                  >
+                    {vesselsFetchBusy ? t('vesselsFetchBusy') : t('vesselsFetchNow')}
+                  </Button>
+                  {vesselsFetchMsg === 'ok' ? (
+                    <p className="text-sm text-foreground" role="status">
+                      {t('vesselsFetchOk')}
+                    </p>
+                  ) : null}
+                  {vesselsFetchMsg && vesselsFetchMsg !== 'ok' ? (
+                    <p className="text-sm text-destructive" role="alert">
+                      {vesselsFetchMsg === 'forbidden' ? t('settingsForbidden') : t('vesselsFetchFailed')}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {dataDocked?.configured ? (
                 <div className="space-y-2">
                   <Label htmlFor="docked-interval">{t('dockedInterval')}</Label>
@@ -398,8 +585,10 @@ export function SettingsDialog({ open, onOpenChange, onEditTrip }: SettingsDialo
     <ManualPositionDialog
       open={reportOpen}
       onOpenChange={setReportOpen}
+      mmsi={selectedMmsi || undefined}
       onSubmitted={() => {
-        void fetch('/api/manual-position', { credentials: 'include' })
+        const qs = selectedMmsi ? `?mmsi=${encodeURIComponent(selectedMmsi)}` : ''
+        void fetch(`/api/manual-position${qs}`, { credentials: 'include' })
           .then((res) => (res.ok ? res.json() : null))
           .then(
             (data: {

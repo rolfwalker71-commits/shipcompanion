@@ -109,7 +109,9 @@ export function StatusStrip({
   const sourceLabel =
     snapshot.seenSource === 'ais'
       ? t('signalAis')
-      : snapshot.seenSource === 'manual'
+      : snapshot.seenSource === 'vessels'
+        ? t('signalVessels')
+        : snapshot.seenSource === 'manual'
         ? t('sourceBoard')
         : snapshot.seenSource === 'datadocked'
           ? t('sourceDd')
@@ -119,7 +121,9 @@ export function StatusStrip({
   const sourceAria =
     snapshot.seenSource === 'ais'
       ? t('signalAis')
-      : snapshot.seenSource === 'manual'
+      : snapshot.seenSource === 'vessels'
+        ? t('sourceVesselsFull')
+        : snapshot.seenSource === 'manual'
         ? t('sourceBoardFull')
         : snapshot.seenSource === 'datadocked' || snapshot.dataDocked?.seenAt
           ? t('sourceDdFull')

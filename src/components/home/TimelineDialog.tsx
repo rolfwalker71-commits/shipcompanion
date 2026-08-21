@@ -15,9 +15,10 @@ import {
 type TimelineDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  mmsi?: string
 }
 
-export function TimelineDialog({ open, onOpenChange }: TimelineDialogProps) {
+export function TimelineDialog({ open, onOpenChange, mmsi }: TimelineDialogProps) {
   const { t, i18n } = useTranslation()
   const compact = useCompactUi()
   const locale = i18n.language.startsWith('de') ? 'de' : 'en'
@@ -26,7 +27,7 @@ export function TimelineDialog({ open, onOpenChange }: TimelineDialogProps) {
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    void fetch('/api/timeline', { credentials: 'include' })
+    void fetch(mmsi ? `/api/timeline?mmsi=${encodeURIComponent(mmsi)}` : '/api/timeline', { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : { events: [] }))
       .then((data: { events?: TimelineEvent[] }) => {
         if (!cancelled) setEvents(data.events ?? [])
@@ -37,7 +38,7 @@ export function TimelineDialog({ open, onOpenChange }: TimelineDialogProps) {
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, mmsi])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

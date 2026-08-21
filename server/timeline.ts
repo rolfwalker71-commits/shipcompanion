@@ -8,8 +8,11 @@ let events = readJsonSync<TimelineEvent[]>('timeline.json', []).filter(
   (row) => row?.id && row.kind && row.at && row.titleDe && row.titleEn,
 )
 
-export function listTimeline(): TimelineEvent[] {
-  return [...events].sort((a, b) => (a.at < b.at ? 1 : -1))
+export function listTimeline(mmsi?: string): TimelineEvent[] {
+  const rows = mmsi
+    ? events.filter((row) => !row.mmsi || row.mmsi === mmsi)
+    : events
+  return [...rows].sort((a, b) => (a.at < b.at ? 1 : -1))
 }
 
 export async function addTimelineEvent(
@@ -23,13 +26,20 @@ export async function addTimelineEvent(
     titleEn: event.titleEn,
     detailDe: event.detailDe,
     detailEn: event.detailEn,
+    mmsi: event.mmsi,
+    shipName: event.shipName,
   }
   events = [next, ...events.filter((row) => row.id !== next.id)].slice(0, MAX_EVENTS)
   await writeJson('timeline.json', events)
   return next
 }
 
-export function recentlyLogged(kind: TimelineEvent['kind'], windowMs: number): boolean {
+export function recentlyLogged(kind: TimelineEvent['kind'], windowMs: number, mmsi?: string): boolean {
   const since = Date.now() - windowMs
-  return events.some((row) => row.kind === kind && new Date(row.at).getTime() >= since)
+  return events.some(
+    (row) =>
+      row.kind === kind &&
+      new Date(row.at).getTime() >= since &&
+      (!mmsi || !row.mmsi || row.mmsi === mmsi),
+  )
 }

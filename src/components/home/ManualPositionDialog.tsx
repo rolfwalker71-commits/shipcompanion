@@ -52,6 +52,7 @@ type ArchiveMeta = {
 type ManualPositionDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  mmsi?: string
   onSubmitted?: () => void
 }
 
@@ -158,7 +159,7 @@ function RouteMapInset({
   )
 }
 
-export function ManualPositionDialog({ open, onOpenChange, onSubmitted }: ManualPositionDialogProps) {
+export function ManualPositionDialog({ open, onOpenChange, mmsi, onSubmitted }: ManualPositionDialogProps) {
   const { t } = useTranslation()
   const [postedBy, setPostedBy] = useState('')
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -176,11 +177,12 @@ export function ManualPositionDialog({ open, onOpenChange, onSubmitted }: Manual
   const [selectedArchive, setSelectedArchive] = useState<{ meta: ArchiveMeta; points: RoutePoint[] } | null>(null)
 
   const loadRoute = useCallback(async () => {
-    const res = await fetch('/api/manual-position/route', { credentials: 'include' })
+    const qs = mmsi ? `?mmsi=${encodeURIComponent(mmsi)}` : ''
+    const res = await fetch(`/api/manual-position/route${qs}`, { credentials: 'include' })
     if (!res.ok) return
     const data = (await res.json()) as { points?: RoutePoint[] }
     setActiveRoute(Array.isArray(data.points) ? data.points : [])
-  }, [])
+  }, [mmsi])
 
   const loadArchives = useCallback(async () => {
     const res = await fetch('/api/manual-position/archive', { credentials: 'include' })
@@ -262,6 +264,7 @@ export function ManualPositionDialog({ open, onOpenChange, onSubmitted }: Manual
         lng: preview.lng,
         accuracyM: preview.accuracyM,
         postedBy: postedBy.trim() || undefined,
+        mmsi: mmsi || undefined,
       }),
     })
       .then(async (res) => {
@@ -287,7 +290,7 @@ export function ManualPositionDialog({ open, onOpenChange, onSubmitted }: Manual
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: archiveName.trim() || undefined }),
+        body: JSON.stringify({ name: archiveName.trim() || undefined, mmsi: mmsi || undefined }),
       })
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null

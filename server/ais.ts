@@ -200,8 +200,16 @@ async function saveCache(): Promise<void> {
   await writeFile(CACHE_FILE, JSON.stringify(payload), 'utf8')
 }
 
-function rememberPosition(mmsi: string, fix: LiveFix): void {
+/** Record a position in the trail. AIS frames mark aisFix; Vessels API does not. */
+export function ingestFix(mmsi: string, fix: LiveFix, source: 'ais' | 'external' = 'external'): void {
+  rememberPosition(mmsi, fix, source === 'ais')
+}
+
+function rememberPosition(mmsi: string, fix: LiveFix, markAis = true): void {
   const prev = ensureTrack(mmsi)
+  if (!markAis && prev.fix && fix.ts < prev.fix.ts - 5_000) {
+    return
+  }
   const statusNav = navStateFromAis(fix.navStatus, null)
   let sog = fix.sog ?? inferredSog(prev.fix, fix)
   if (sog == null) sog = isStoppedNav(statusNav) ? 0 : (prev.fix?.sog ?? null)
@@ -235,7 +243,7 @@ function rememberPosition(mmsi: string, fix: LiveFix): void {
   tracks.set(mmsi, {
     ...prev,
     fix: merged,
-    aisFix: merged,
+    aisFix: markAis ? merged : prev.aisFix,
     trail: appendTrail(prev.trail, merged, parked),
     berthId,
     parked: parkedPoint,
@@ -244,7 +252,7 @@ function rememberPosition(mmsi: string, fix: LiveFix): void {
   void saveCache()
 }
 
-function rememberVoyage(mmsi: string, voyage: VoyageData): void {
+export function rememberVoyage(mmsi: string, voyage: VoyageData): void {
   const prev = ensureTrack(mmsi)
   tracks.set(mmsi, {
     ...prev,
@@ -271,7 +279,7 @@ function nearestStop(point: GeoPoint, stops: PortStop[]): PortStop | null {
 }
 
 function appendTrail(trail: GeoPoint[], fix: LiveFix, parked: boolean): GeoPoint[] {
-  const point = { lat: fix.lat, lng: fix.lng }
+  const point = { lat: fix.lat, lng: fix.lng, ts: fix.ts }
   if (trail.length === 0) return [point]
   const last = trail[trail.length - 1]
   const moved = haversineKm(last, point)
@@ -280,6 +288,43 @@ function appendTrail(trail: GeoPoint[], fix: LiveFix, parked: boolean): GeoPoint
   }
   const next = [...trail, point]
   return next.length > MAX_TRAIL ? next.slice(next.length - MAX_TRAIL) : next
+}
+
+/** Merge timestamped history into the stored trail (used by Vessels /track). */
+export function ingestHistory(mmsi: string, points: LiveFix[]): number {
+  if (!mmsi || points.length === 0) return 0
+  const prev = ensureTrack(mmsi)
+  type Stamped = GeoPoint & { ts: number }
+  const pool: Stamped[] = []
+  for (const point of prev.trail) {
+    const ts = typeof (point as GeoPoint & { ts?: number }).ts === 'number' ? (point as GeoPoint & { ts: number }).ts : 0
+    if (ts > 0) pool.push({ lat: point.lat, lng: point.lng, ts })
+  }
+  let added = 0
+  for (const point of points) {
+    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.ts)) continue
+    pool.push({ lat: point.lat, lng: point.lng, ts: point.ts })
+    added += 1
+  }
+  if (!added && pool.length === 0) return 0
+  pool.sort((a, b) => a.ts - b.ts)
+  const merged: Stamped[] = []
+  for (const point of pool) {
+    const last = merged[merged.length - 1]
+    if (!last) {
+      merged.push(point)
+      continue
+    }
+    if (point.ts - last.ts < 45_000 || haversineKm(last, point) < MIN_TRAIL_KM) {
+      merged[merged.length - 1] = point
+      continue
+    }
+    merged.push(point)
+  }
+  const trail = merged.length > MAX_TRAIL ? merged.slice(merged.length - MAX_TRAIL) : merged
+  tracks.set(mmsi, { ...prev, trail })
+  void saveCache()
+  return added
 }
 
 function subscribe(): void {
@@ -420,7 +465,7 @@ function connect(): void {
         navStatus: readCoord(report.NavigationalStatus),
         cog: readCog(report.Cog ?? report.COG),
         heading: readHeading(report.TrueHeading),
-      })
+      }, true)
       if (watched.has(mmsi)) {
         console.log(`AIS ${mmsi} ${lat.toFixed(3)},${lng.toFixed(3)}`)
       }
@@ -469,7 +514,10 @@ export function livePosition(mmsi: string, maxAgeMs = AIS_LIVE_MS): LiveFix | nu
 
 export function lastKnownPosition(mmsi: string): LiveFix | null {
   const track = tracks.get(mmsi)
-  return track?.aisFix ?? track?.fix ?? null
+  const ais = track?.aisFix ?? null
+  const last = track?.fix ?? null
+  if (ais && last) return ais.ts >= last.ts ? ais : last
+  return ais ?? last
 }
 
 export function lastAisPosition(mmsi: string): LiveFix | null {

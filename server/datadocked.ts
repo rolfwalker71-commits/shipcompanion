@@ -24,6 +24,7 @@ type Store = {
   lastError: string | null
   lastMmsi: string | null
   lastFix: DockedFix | null
+  lastFixes: Record<string, DockedFix>
   intervalHours: number | null
   /** One-shot: skip the next scheduled fetch after an onboard GPS report. */
   skipNextDockedFetch: boolean
@@ -36,7 +37,15 @@ const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_INTERVAL_HOURS = 3
 const DEFAULT_MONTHLY_LIMIT = 250
 
-let store = readJsonSync<Store>('datadocked.json', emptyStore())
+let store = migrateDockedStore(readJsonSync<Store>('datadocked.json', emptyStore()))
+
+function migrateDockedStore(raw: Store): Store {
+  const lastFixes = raw.lastFixes && typeof raw.lastFixes === 'object' ? { ...raw.lastFixes } : {}
+  if (raw.lastMmsi && raw.lastFix && !lastFixes[raw.lastMmsi]) {
+    lastFixes[raw.lastMmsi] = raw.lastFix
+  }
+  return { ...raw, lastFixes }
+}
 type FetchOutcome =
   | { kind: 'ok'; fix: DockedFix }
   | { kind: 'no_position' }
@@ -99,6 +108,7 @@ function emptyStore(): Store {
     lastError: null,
     lastMmsi: null,
     lastFix: null,
+    lastFixes: {},
     intervalHours: null,
     skipNextDockedFetch: false,
     skipArmedAt: null,
@@ -114,6 +124,7 @@ function rollMonth(): void {
     month,
     credits: store.credits,
     lastFix: store.lastFix,
+    lastFixes: store.lastFixes ?? {},
     lastMmsi: store.lastMmsi,
     intervalHours: store.intervalHours,
     skipNextDockedFetch: store.skipNextDockedFetch,
@@ -159,7 +170,8 @@ export function dataDockedError(): string | null {
   return store.lastError
 }
 
-export function lastDataDockedFix(): DockedFix | null {
+export function lastDataDockedFix(mmsi?: string): DockedFix | null {
+  if (mmsi) return store.lastFixes[mmsi] ?? (store.lastMmsi === mmsi ? store.lastFix : null)
   return store.lastFix
 }
 
@@ -320,6 +332,7 @@ async function fetchLocation(mmsi: string): Promise<FetchOutcome> {
     store.lastError = fix ? null : parseMiss(data)
     if (fix) {
       store.lastFix = fix
+      if (mmsi) store.lastFixes[mmsi] = fix
       lastFailAt = null
       gapFetchAt = Date.now()
       console.log(

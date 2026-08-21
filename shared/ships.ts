@@ -76,8 +76,18 @@ export function tripShip(trip: Trip): CruiseShip | undefined {
       line: trip.customShip.line || 'Custom',
       lineDe: trip.customShip.lineDe || trip.customShip.line || 'Eigene Angabe',
       mmsi: trip.customShip.mmsi.replace(/\D/g, ''),
-      imo: '',
+      imo: (trip.customShip.imo ?? '').replace(/\D/g, ''),
     }
   }
   return shipById(trip.shipId)
+}
+
+export function tripMmsi(trip: Trip): string {
+  return tripShip(trip)?.mmsi ?? ''
+}
+
+export function tripKey(trip: Trip): string {
+  if (trip.id) return trip.id
+  const mmsi = tripMmsi(trip)
+  return mmsi || trip.shipId
 }

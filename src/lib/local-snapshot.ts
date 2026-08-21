@@ -66,5 +66,6 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
     gap: [],
     forecast: forecastPath(null, guessed.point, destination, atPort),
     dataDocked: null,
+    vesselsApi: null,
   }
 }

@@ -8,7 +8,13 @@ import { existsSync } from 'node:fs'
 import type { SnapshotRequest } from '../shared/types.ts'
 import { aisConfigured, aisError } from './ais.ts'
 import { dataDockedStatus, forceRefreshDataDocked, setIntervalHours, settingsPinConfigured } from './datadocked.ts'
-import { tripShip } from '../shared/ships.ts'
+import {
+  forceRefreshVessels,
+  setVesselsIntervalMinutes,
+  startVesselsPoll,
+  vesselsApiStatus,
+} from './vessels-api.ts'
+import { tripMmsi, tripShip } from '../shared/ships.ts'
 import {
   COOKIE_NAME,
   allowLoginAttempt,
@@ -22,7 +28,7 @@ import {
   sessionIsValid,
   sessionRole,
 } from './auth.ts'
-import { getStoredTrip, parseTrip, saveStoredTrip } from './trip-store.ts'
+import { getStoredTrip, parseTrip, saveStoredTrip, listFleet, saveFleet, upsertTrip, removeTrip, syncWatches } from './trip-store.ts'
 import { buildSnapshot } from './snapshot.ts'
 import { addTimelineEvent, listTimeline } from './timeline.ts'
 import { notifyFamily, pushPublicKey, removePushSub, savePushSub } from './push.ts'
@@ -47,6 +53,17 @@ const app = new Hono()
 
 function clientIp(headers: Headers): string {
   return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local'
+}
+
+function queryMmsi(c: { req: { query: (name: string) => string | undefined } }): string {
+  return (c.req.query('mmsi') ?? '').replace(/\D/g, '')
+}
+
+function selectedMmsi(explicit?: string): string {
+  const fromQuery = (explicit ?? '').replace(/\D/g, '')
+  if (fromQuery) return fromQuery
+  const trip = getStoredTrip()
+  return trip ? tripMmsi(trip) : ''
 }
 
 function requestIsHttps(request: Request): boolean {
@@ -145,6 +162,7 @@ app.get('/api/status', (c) => {
   return c.json({
     aisConfigured: aisConfigured(),
     dataDocked: dataDockedStatus(),
+    vesselsApi: vesselsApiStatus(),
     pinConfigured: settingsPinConfigured(),
     llmConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
     aisError: aisError(),
@@ -152,7 +170,7 @@ app.get('/api/status', (c) => {
 })
 
 app.get('/api/manual-position', (c) => {
-  return c.json({ fix: publicManualFix() })
+  return c.json({ fix: publicManualFix(queryMmsi(c) || undefined) })
 })
 
 app.post('/api/manual-position', async (c) => {
@@ -164,6 +182,7 @@ app.post('/api/manual-position', async (c) => {
     lng?: unknown
     accuracyM?: unknown
     postedBy?: unknown
+    mmsi?: unknown
   } | null
   const result = saveManualFix(body ?? {})
   if (!result.ok) {
@@ -173,12 +192,16 @@ app.post('/api/manual-position', async (c) => {
   const who = result.fix.postedBy
   const acc =
     result.fix.accuracyM != null ? ` (±${Math.round(result.fix.accuracyM)} m)` : ''
+  const mmsi = typeof body?.mmsi === 'string' ? body.mmsi.replace(/\D/g, '') : ''
+  const ship = mmsi ? listFleet().map(tripShip).find((row) => row?.mmsi === mmsi) : undefined
   await addTimelineEvent({
     kind: 'manual-position',
-    titleDe: 'Position von Bord gemeldet',
-    titleEn: 'Position reported from the ship',
+    titleDe: ship ? `${ship.name}: Position von Bord gemeldet` : 'Position von Bord gemeldet',
+    titleEn: ship ? `${ship.name}: position reported from the ship` : 'Position reported from the ship',
     detailDe: who ? `Von ${who}${acc}` : acc ? `GPS${acc}` : undefined,
     detailEn: who ? `From ${who}${acc}` : acc ? `GPS${acc}` : undefined,
+    mmsi: mmsi || undefined,
+    shipName: ship?.name,
   })
   await notifyFamily(
     'Position von Bord gemeldet',
@@ -193,7 +216,7 @@ app.delete('/api/manual-position', (c) => {
   if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
     return c.json({ error: 'forbidden' }, 403)
   }
-  const cleared = clearManualFix()
+  const cleared = clearManualFix(queryMmsi(c) || undefined)
   return c.json({ ok: true, cleared })
 })
 
@@ -201,7 +224,7 @@ app.get('/api/manual-position/route', (c) => {
   if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
     return c.json({ error: 'forbidden' }, 403)
   }
-  return c.json({ points: getActiveRoute() })
+  return c.json({ points: getActiveRoute(queryMmsi(c) || undefined) })
 })
 
 app.get('/api/manual-position/archive', (c) => {
@@ -215,8 +238,9 @@ app.post('/api/manual-position/archive', async (c) => {
   if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
     return c.json({ error: 'forbidden' }, 403)
   }
-  const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null
-  const result = archiveActiveRoute(body?.name)
+  const body = (await c.req.json().catch(() => null)) as { name?: unknown; mmsi?: unknown } | null
+  const mmsi = typeof body?.mmsi === 'string' ? body.mmsi.replace(/\D/g, '') : queryMmsi(c)
+  const result = archiveActiveRoute(body?.name, mmsi || undefined)
   if (!result.ok) return c.json({ error: result.error }, 400)
   return c.json({ archive: { id: result.archive.id, name: result.archive.name, createdAt: result.archive.createdAt, pointCount: result.archive.points.length } })
 })
@@ -244,9 +268,9 @@ app.post('/api/datadocked/fetch', async (c) => {
   if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
     return c.json({ error: 'forbidden' }, 403)
   }
-  const trip = getStoredTrip()
-  const ship = trip ? tripShip(trip) : undefined
-  const result = await forceRefreshDataDocked(ship?.mmsi ?? '')
+  const body = (await c.req.json().catch(() => null)) as { mmsi?: string } | null
+  const mmsi = selectedMmsi(body?.mmsi)
+  const result = await forceRefreshDataDocked(mmsi)
   if (!result.ok) {
     const http =
       result.error === 'no_credits'
@@ -263,8 +287,67 @@ app.post('/api/datadocked/fetch', async (c) => {
   })
 })
 
+app.post('/api/vessels/interval', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const body = (await c.req.json().catch(() => null)) as { minutes?: number } | null
+  const minutes = Number(body?.minutes)
+  if (!setVesselsIntervalMinutes(minutes)) return c.json({ error: 'invalid_interval' }, 400)
+  return c.json({ vesselsApi: vesselsApiStatus() })
+})
+
+app.post('/api/vessels/fetch', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const result = await forceRefreshVessels()
+  if (!result.ok) {
+    const http = result.error === 'not_configured' || result.error === 'no_ships' ? 400 : 502
+    return c.json({ error: result.error, vesselsApi: vesselsApiStatus() }, http)
+  }
+  return c.json({ ok: true, vesselsApi: vesselsApiStatus() })
+})
+
+app.get('/api/fleet', (c) => {
+  return c.json({ ships: listFleet() })
+})
+
+app.put('/api/fleet', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const body = (await c.req.json().catch(() => null)) as { ships?: unknown } | null
+  const ships = Array.isArray(body?.ships) ? body.ships.map(parseTrip).filter((row): row is NonNullable<typeof row> => Boolean(row)) : null
+  if (!ships) return c.json({ error: 'invalid_fleet' }, 400)
+  const next = await saveFleet(ships)
+  startTripWatch()
+  return c.json({ ships: next })
+})
+
+app.post('/api/fleet/ships', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const trip = parseTrip(await c.req.json().catch(() => null))
+  if (!trip) return c.json({ error: 'invalid_trip' }, 400)
+  const saved = await upsertTrip(trip)
+  startTripWatch()
+  return c.json({ trip: saved, ships: listFleet() })
+})
+
+app.delete('/api/fleet/ships/:id', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const ok = await removeTrip(c.req.param('id'))
+  if (!ok) return c.json({ error: 'not_found' }, 404)
+  startTripWatch()
+  return c.json({ ships: listFleet() })
+})
+
 app.get('/api/trip', (c) => {
-  return c.json({ trip: getStoredTrip() })
+  return c.json({ trip: getStoredTrip(), ships: listFleet() })
 })
 
 app.put('/api/trip', async (c) => {
@@ -279,7 +362,7 @@ app.put('/api/trip', async (c) => {
 })
 
 app.get('/api/timeline', (c) => {
-  return c.json({ events: listTimeline() })
+  return c.json({ events: listTimeline(queryMmsi(c) || undefined) })
 })
 
 app.get('/api/push/key', (c) => {
@@ -393,4 +476,6 @@ serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
   if (!expectedAccessKey()) console.warn('APP_ACCESS_KEY is empty — family login will fail until it is set.')
   if (!expectedSettingsPin()) console.warn('SETTINGS_PIN is empty — family login also has admin until it is set.')
   startTripWatch()
+  syncWatches()
+  startVesselsPoll()
 })

@@ -37,29 +37,52 @@ export type SaveManualResult =
   | { ok: true; fix: ManualFix }
   | { ok: false; error: 'invalid_coords' | 'invalid_accuracy' | 'too_soon' }
 
-let store = readStored()
-let activeRoute: RoutePoint[] = readJsonSync<RoutePoint[]>('manual-position-route.json', [])
+let byMmsi: Record<string, ManualFix> = readStoredMap()
+let routes: Record<string, RoutePoint[]> = readRouteMap()
 let archives: RouteArchive[] = readJsonSync<RouteArchive[]>('manual-position-archive.json', [])
 
-function readStored(): ManualFix | null {
-  const raw = readJsonSync<ManualFix | null>('manual-position.json', null)
+function parseFix(raw: unknown): ManualFix | null {
   if (!raw || typeof raw !== 'object') return null
-  if (!Number.isFinite(raw.lat) || !Number.isFinite(raw.lng) || !Number.isFinite(raw.ts)) return null
+  const row = raw as ManualFix
+  if (!Number.isFinite(row.lat) || !Number.isFinite(row.lng) || !Number.isFinite(row.ts)) return null
   return {
-    lat: raw.lat,
-    lng: raw.lng,
-    ts: raw.ts,
-    accuracyM: Number.isFinite(raw.accuracyM) ? raw.accuracyM : null,
-    postedBy: typeof raw.postedBy === 'string' && raw.postedBy.trim() ? raw.postedBy.trim() : null,
+    lat: row.lat,
+    lng: row.lng,
+    ts: row.ts,
+    accuracyM: Number.isFinite(row.accuracyM) ? row.accuracyM : null,
+    postedBy: typeof row.postedBy === 'string' && row.postedBy.trim() ? row.postedBy.trim() : null,
   }
 }
 
+function readStoredMap(): Record<string, ManualFix> {
+  const raw = readJsonSync<unknown>('manual-position.json', null)
+  if (!raw || typeof raw !== 'object') return {}
+  const row = raw as { byMmsi?: Record<string, unknown>; lat?: number; ts?: number }
+  if (row.byMmsi && typeof row.byMmsi === 'object') {
+    const next: Record<string, ManualFix> = {}
+    for (const [key, value] of Object.entries(row.byMmsi)) {
+      const fix = parseFix(value)
+      if (fix) next[key] = fix
+    }
+    return next
+  }
+  const legacy = parseFix(raw)
+  return legacy ? { '': legacy } : {}
+}
+
+function readRouteMap(): Record<string, RoutePoint[]> {
+  const raw = readJsonSync<unknown>('manual-position-route.json', [])
+  if (Array.isArray(raw)) return { '': raw as RoutePoint[] }
+  if (raw && typeof raw === 'object') return raw as Record<string, RoutePoint[]>
+  return {}
+}
+
 function persist(): void {
-  void writeJson('manual-position.json', store)
+  void writeJson('manual-position.json', { byMmsi })
 }
 
 function persistRoute(): void {
-  void writeJson('manual-position-route.json', activeRoute)
+  void writeJson('manual-position-route.json', routes)
 }
 
 function persistArchives(): void {
@@ -72,16 +95,20 @@ function cleanText(value: unknown, maxLen: number): string | null {
   return trimmed || null
 }
 
-export function lastManualFix(): ManualFix | null {
-  return store
+export function lastManualFix(mmsi?: string): ManualFix | null {
+  if (mmsi) return byMmsi[mmsi] ?? byMmsi[''] ?? null
+  const rows = Object.values(byMmsi)
+  if (!rows.length) return null
+  return rows.reduce((newest, row) => (row.ts > newest.ts ? row : newest))
 }
 
-export function manualIsFresh(fix: ManualFix | null = store, now = Date.now()): boolean {
+export function manualIsFresh(fix: ManualFix | null = lastManualFix(), now = Date.now()): boolean {
   return Boolean(fix && now - fix.ts < MANUAL_LIVE_MS)
 }
 
-export function getActiveRoute(): RoutePoint[] {
-  return activeRoute
+export function getActiveRoute(mmsi?: string): RoutePoint[] {
+  if (mmsi) return routes[mmsi] ?? routes[''] ?? []
+  return Object.values(routes).flat()
 }
 
 export function getArchives(): Omit<RouteArchive, 'points'>[] {
@@ -99,7 +126,9 @@ export function getArchiveById(id: string): RouteArchive | null {
   return archives.find((a) => a.id === id) ?? null
 }
 
-export function archiveActiveRoute(name: unknown): { ok: true; archive: RouteArchive } | { ok: false; error: string } {
+export function archiveActiveRoute(name: unknown, mmsi?: string): { ok: true; archive: RouteArchive } | { ok: false; error: string } {
+  const key = mmsi || ''
+  const activeRoute = routes[key] ?? []
   if (activeRoute.length === 0) return { ok: false, error: 'empty_route' }
   const archive: RouteArchive = {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -109,7 +138,7 @@ export function archiveActiveRoute(name: unknown): { ok: true; archive: RouteArc
   }
   archives = [archive, ...archives].slice(0, MAX_ARCHIVES)
   persistArchives()
-  activeRoute = []
+  routes[key] = []
   persistRoute()
   return { ok: true, archive }
 }
@@ -119,6 +148,7 @@ export function saveManualFix(input: {
   lng?: unknown
   accuracyM?: unknown
   postedBy?: unknown
+  mmsi?: unknown
 }): SaveManualResult {
   const lat = Number(input.lat)
   const lng = Number(input.lng)
@@ -135,31 +165,45 @@ export function saveManualFix(input: {
     accuracyM = acc
   }
 
+  const key = typeof input.mmsi === 'string' ? input.mmsi.replace(/\D/g, '') : ''
   const now = Date.now()
-  if (store && now - store.ts < RATE_LIMIT_MS) {
+  const prev = byMmsi[key] ?? byMmsi[''] ?? null
+  if (prev && now - prev.ts < RATE_LIMIT_MS) {
     return { ok: false, error: 'too_soon' }
   }
 
   const postedBy = cleanText(input.postedBy, MAX_POSTED_BY)
-  store = { lat, lng, ts: now, accuracyM, postedBy }
+  const fix: ManualFix = { lat, lng, ts: now, accuracyM, postedBy }
+  byMmsi[key || Object.keys(byMmsi)[0] || ''] = fix
+  if (key) delete byMmsi['']
   persist()
 
   const point: RoutePoint = { lat, lng, ts: now, accuracyM, postedBy }
-  activeRoute = [...activeRoute, point].slice(-MAX_ROUTE_POINTS)
+  const routeKey = key || ''
+  routes[routeKey] = [...(routes[routeKey] ?? []), point].slice(-MAX_ROUTE_POINTS)
   persistRoute()
 
   armSkipNextDockedFetch()
-  return { ok: true, fix: store }
+  return { ok: true, fix }
 }
 
-export function clearManualFix(): boolean {
-  const had = Boolean(store)
-  store = null
-  persist()
-  return had
+export function clearManualFix(mmsi?: string): boolean {
+  const key = mmsi?.replace(/\D/g, '') ?? ''
+  if (key && byMmsi[key]) {
+    delete byMmsi[key]
+    persist()
+    return true
+  }
+  if (!key && Object.keys(byMmsi).length) {
+    byMmsi = {}
+    persist()
+    return true
+  }
+  return false
 }
 
-export function publicManualFix(fix: ManualFix | null = store) {
+export function publicManualFix(mmsi?: string) {
+  const fix = lastManualFix(mmsi)
   if (!fix) return null
   return {
     lat: fix.lat,

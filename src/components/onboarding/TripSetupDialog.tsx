@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CUSTOM_SHIP_ID, cruiseLines, shipsForLine, tripShip } from '@shared/ships.ts'
+import { CUSTOM_SHIP_ID, cruiseLines, shipById, shipsForLine, tripShip } from '@shared/ships.ts'
 import { itineraryPresets, presetById, stopsForTrip } from '@shared/itineraries.ts'
 import type { Trip } from '@shared/types.ts'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,7 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
   const [endDate, setEndDate] = useState(toDateInput(presets[0].stops[presets[0].stops.length - 1].departAt))
   const [customName, setCustomName] = useState('')
   const [customMmsi, setCustomMmsi] = useState('')
+  const [customImo, setCustomImo] = useState('')
   const [busy, setBusy] = useState(false)
   const [saveError, setSaveError] = useState(false)
 
@@ -54,6 +55,7 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
     setEndDate(trip?.endDate ?? toDateInput((preset ?? presets[0]).stops[(preset ?? presets[0]).stops.length - 1].departAt))
     setCustomName(trip?.customShip?.name ?? '')
     setCustomMmsi(trip?.customShip?.mmsi ?? '')
+    setCustomImo(trip?.customShip?.imo ?? '')
     setSaveError(false)
     setBusy(false)
   }, [lines, open, presets, trip])
@@ -82,17 +84,21 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
     const preset = presetById(presetId) ?? presets[0]
     const line = lines.find((item) => item.id === lineId)
     const mmsi = customMmsi.replace(/\D/g, '')
+    const imo = customImo.replace(/\D/g, '')
     if (shipId === CUSTOM_SHIP_ID && (!customName.trim() || mmsi.length < 9)) return
     setBusy(true)
     setSaveError(false)
     try {
+      const catalog = shipId === CUSTOM_SHIP_ID ? undefined : shipById(shipId)
       await onSave({
+        id: (shipId === CUSTOM_SHIP_ID ? mmsi : catalog?.mmsi) || shipId,
         shipId,
         customShip:
           shipId === CUSTOM_SHIP_ID
             ? {
                 name: customName.trim(),
                 mmsi,
+                imo: imo || undefined,
                 line: line?.name ?? 'Custom',
                 lineDe: line?.nameDe ?? 'Eigene Angabe',
               }
@@ -172,6 +178,16 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
                 >
                   {t('mmsiLookup')}
                 </a>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="custom-imo">{t('customImo')}</Label>
+                <Input
+                  id="custom-imo"
+                  inputMode="numeric"
+                  value={customImo}
+                  onChange={(event) => setCustomImo(event.target.value)}
+                />
+                <p className="text-xs leading-relaxed text-muted-foreground">{t('imoHint')}</p>
               </div>
             </div>
           ) : null}

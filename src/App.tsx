@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppHeader } from '@/components/layout/AppHeader'
 import { InstallBanner } from '@/components/layout/InstallBanner'
@@ -9,7 +9,18 @@ import { LoginScreen } from '@/components/LoginScreen'
 import { TripSetupDialog } from '@/components/onboarding/TripSetupDialog'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { useAuth } from '@/lib/auth'
-import { fetchRemoteTrip, loadTrip, pushRemoteTrip, saveTrip } from '@/lib/trip'
+import {
+  fetchRemoteFleet,
+  loadFleet,
+  loadSelectedId,
+  pickTrip,
+  pushRemoteTrip,
+  removeRemoteTrip,
+  saveFleet,
+  saveSelectedId,
+  saveTrip,
+} from '@/lib/trip'
+import { tripKey, tripMmsi, tripShip } from '@shared/ships.ts'
 import type { Trip } from '@shared/types.ts'
 
 function isWidgetPath(path: string): boolean {
@@ -19,12 +30,24 @@ function isWidgetPath(path: string): boolean {
 export default function App() {
   const { t } = useTranslation()
   const { ready, signedIn, isAdmin } = useAuth()
-  const [trip, setTrip] = useState<Trip | null>(null)
+  const [fleet, setFleet] = useState<Trip[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tripReady, setTripReady] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
+  const [setupMode, setSetupMode] = useState<'add' | 'edit'>('edit')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [widget, setWidget] = useState(() => isWidgetPath(window.location.pathname))
+
+  const trip = useMemo(() => pickTrip(fleet, selectedId), [fleet, selectedId])
+  const shipNames = useMemo(
+    () =>
+      fleet.map((row) => ({
+        id: tripKey(row),
+        name: tripShip(row)?.name ?? row.shipId,
+      })),
+    [fleet],
+  )
 
   useEffect(() => {
     if (!signedIn) {
@@ -34,27 +57,39 @@ export default function App() {
     let cancelled = false
     void (async () => {
       try {
-        const remote = await fetchRemoteTrip()
+        const remote = await fetchRemoteFleet()
         if (cancelled) return
-        if (remote) {
-          saveTrip(remote)
-          setTrip(remote)
+        if (remote.length) {
+          saveFleet(remote)
+          setFleet(remote)
+          const stored = loadSelectedId()
+          setSelectedId(pickTrip(remote, stored) ? stored ?? tripKey(remote[0]) : tripKey(remote[0]))
         } else {
-          const local = loadTrip()
-          if (local && isAdmin) {
+          const local = loadFleet()
+          if (local.length && isAdmin) {
             try {
-              await pushRemoteTrip(local)
+              const saved = await pushRemoteTrip(local[0])
+              if (cancelled) return
+              const merged = [saved, ...local.slice(1)]
+              saveFleet(merged)
+              setFleet(merged)
+              setSelectedId(tripKey(saved))
             } catch {
-              /* show local trip until the server accepts it */
+              if (cancelled) return
+              setFleet(local)
+              setSelectedId(loadSelectedId() ?? tripKey(local[0]))
             }
-            if (cancelled) return
-            setTrip(local)
           } else {
-            setTrip(local)
+            setFleet(local)
+            setSelectedId(local[0] ? loadSelectedId() ?? tripKey(local[0]) : null)
           }
         }
       } catch {
-        if (!cancelled) setTrip(loadTrip())
+        if (!cancelled) {
+          const local = loadFleet()
+          setFleet(local)
+          setSelectedId(local[0] ? loadSelectedId() ?? tripKey(local[0]) : null)
+        }
       } finally {
         if (!cancelled) setTripReady(true)
       }
@@ -65,14 +100,22 @@ export default function App() {
   }, [signedIn, isAdmin])
 
   useEffect(() => {
-    if (signedIn && isAdmin && tripReady && !trip) setSetupOpen(true)
-  }, [signedIn, isAdmin, trip, tripReady])
+    if (signedIn && isAdmin && tripReady && !fleet.length) {
+      setSetupMode('add')
+      setSetupOpen(true)
+    }
+  }, [signedIn, isAdmin, fleet.length, tripReady])
 
   useEffect(() => {
     const sync = () => setWidget(isWidgetPath(window.location.pathname))
     window.addEventListener('popstate', sync)
     return () => window.removeEventListener('popstate', sync)
   }, [])
+
+  function selectShip(id: string) {
+    setSelectedId(id)
+    saveSelectedId(id)
+  }
 
   if (!ready || (signedIn && !tripReady)) {
     return <div className="min-h-dvh bg-background" />
@@ -82,7 +125,7 @@ export default function App() {
     return <LoginScreen />
   }
 
-  const needsSetup = isAdmin && !trip
+  const needsSetup = isAdmin && !fleet.length
 
   return (
     <div className="relative h-dvh overflow-hidden bg-muted">
@@ -94,26 +137,41 @@ export default function App() {
         </div>
       )}
       <AppHeader
+        ships={shipNames}
+        selectedId={trip ? tripKey(trip) : null}
+        onSelectShip={selectShip}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenTimeline={() => setTimelineOpen(true)}
       />
       {widget ? null : <InstallBanner />}
-      <TimelineDialog open={timelineOpen} onOpenChange={setTimelineOpen} />
+      <TimelineDialog
+        open={timelineOpen}
+        onOpenChange={setTimelineOpen}
+        mmsi={trip ? tripMmsi(trip) : undefined}
+      />
       {isAdmin ? (
         <TripSetupDialog
           open={setupOpen || needsSetup}
-          trip={trip}
+          trip={setupMode === 'edit' ? trip : null}
           onOpenChange={(open) => {
-            if (trip) setSetupOpen(open)
+            if (fleet.length) setSetupOpen(open)
           }}
           onSave={async (next) => {
             try {
-              await pushRemoteTrip(next)
-              setTrip(next)
+              const saved = await pushRemoteTrip(next)
+              const key = tripKey(saved)
+              setFleet((current) => {
+                const without = current.filter((row) => tripKey(row) !== key && tripMmsi(row) !== tripMmsi(saved))
+                const merged = [...without, saved]
+                saveFleet(merged)
+                return merged
+              })
+              selectShip(key)
             } catch (error) {
-              if (!trip) {
+              if (!fleet.length) {
                 saveTrip(next)
-                setTrip(next)
+                setFleet([next])
+                selectShip(tripKey(next))
                 return
               }
               throw error
@@ -124,7 +182,24 @@ export default function App() {
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        onEditTrip={() => setSetupOpen(true)}
+        ships={fleet}
+        selectedId={trip ? tripKey(trip) : null}
+        selectedMmsi={trip ? tripMmsi(trip) : ''}
+        onSelectShip={selectShip}
+        onAddShip={() => {
+          setSetupMode('add')
+          setSetupOpen(true)
+        }}
+        onEditTrip={() => {
+          setSetupMode('edit')
+          setSetupOpen(true)
+        }}
+        onRemoveShip={async (id) => {
+          const next = await removeRemoteTrip(id)
+          setFleet(next)
+          const remaining = pickTrip(next, selectedId === id ? null : selectedId)
+          selectShip(remaining ? tripKey(remaining) : '')
+        }}
       />
     </div>
   )

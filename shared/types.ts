@@ -3,6 +3,7 @@ export type Locale = 'de' | 'en'
 export type PositionSource = 'live' | 'approx'
 export type TrackingStatus = 'live' | 'estimated' | 'last-known' | 'no-key' | 'no-signal' | 'ais-error'
 export type AisNavState = 'moored' | 'anchored' | 'underway' | 'restricted' | 'aground' | 'unknown'
+export type SeenSource = 'ais' | 'vessels' | 'datadocked' | 'manual'
 
 export type GeoPoint = {
   lat: number
@@ -38,12 +39,18 @@ export type ItineraryPreset = {
 }
 
 export type Trip = {
+  /** Stable id, usually the MMSI. Unique in the fleet. */
+  id: string
   shipId: string
-  customShip?: { name: string; mmsi: string; line: string; lineDe: string }
+  customShip?: { name: string; mmsi: string; imo?: string; line: string; lineDe: string }
   startDate: string
   endDate: string
   presetId: string
   stops: PortStop[]
+}
+
+export type Fleet = {
+  ships: Trip[]
 }
 
 export type WeatherInfo = {
@@ -68,7 +75,7 @@ export type SnapshotResponse = {
   position: GeoPoint & { source: PositionSource }
   tracking: TrackingStatus
   seenAt: string | null
-  seenSource: 'ais' | 'datadocked' | 'manual' | null
+  seenSource: SeenSource | null
   seenAccuracyM: number | null
   motion: {
     nav: AisNavState
@@ -111,6 +118,7 @@ export type SnapshotResponse = {
     source: 'TER' | 'SAT' | null
     lastError: string | null
   } | null
+  vesselsApi: VesselsApiStatus | null
 }
 
 export type DataDockedStatus = {
@@ -124,6 +132,18 @@ export type DataDockedStatus = {
   lastError: string | null
   lastSource: 'TER' | 'SAT' | null
   intervalHours: number
+  pinConfigured: boolean
+}
+
+export type VesselsApiStatus = {
+  configured: boolean
+  intervalMinutes: number
+  lastFetchAt: string | null
+  nextFetchAt: string | null
+  lastHistoryAt: string | null
+  nextHistoryAt: string | null
+  lastError: string | null
+  vesselCount: number
   pinConfigured: boolean
 }
 
@@ -144,4 +164,6 @@ export type TimelineEvent = {
   titleEn: string
   detailDe?: string
   detailEn?: string
+  mmsi?: string
+  shipName?: string
 }

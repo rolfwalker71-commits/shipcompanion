@@ -2,13 +2,13 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowDown, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Gauge, MapPinned, RadioTower, Ship, Smartphone, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { CruiseShip, PortStop, SnapshotResponse, WeatherInfo } from '@shared/types.ts'
-import { DISPLAY_TZ, formatArrivalParts, formatClock, formatSeen } from '@shared/time.ts'
+import { UTC2_TZ, formatArrivalParts, formatClock, formatSeen } from '@shared/time.ts'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ShipFactsDialog } from './ShipFactsDialog'
-import { TodayPanel } from './TodayPanel'
+import { DualClock, TodayPanel } from './TodayPanel'
 
 const PAGE_COUNT = 2
 
@@ -97,8 +97,8 @@ export function StatusStrip({
   const fromName = !atPort ? snapshot.fromPort : null
   const pocName = nextName
   const departure =
-    snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale) : null
-  const arrival = formatArrivalParts(snapshot.nextPort.arriveAt, locale)
+    snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale, snapshot.shipTz) : null
+  const arrival = formatArrivalParts(snapshot.nextPort.arriveAt, locale, snapshot.shipTz)
   const routeAria = mooredAt
     ? showNextLeg
       ? `${mooredAt}. ${t('continuesTo', { name: nextName })}`
@@ -130,12 +130,18 @@ export function StatusStrip({
           : null
   const SourceIcon = snapshot.seenSource === 'manual' ? Smartphone : RadioTower
   const seenIso = snapshot.seenAt ?? snapshot.dataDocked?.seenAt ?? null
-  const seenTime = seenIso ? formatClock(new Date(seenIso), locale, DISPLAY_TZ) : null
+  const seenUtc2 = seenIso ? formatClock(new Date(seenIso), locale, UTC2_TZ) : null
+  const seenShip =
+    seenIso && snapshot.shipTz ? formatClock(new Date(seenIso), locale, snapshot.shipTz) : null
   const accuracyLabel =
     snapshot.seenSource === 'manual' && snapshot.seenAccuracyM != null
       ? t('manualPositionAccuracy', { meters: Math.round(snapshot.seenAccuracyM) })
       : null
-  const liveMeta = [sourceAria, seenTime ? t('lastUpdateAria', { time: seenTime }) : null, accuracyLabel]
+  const liveMeta = [
+    sourceAria,
+    seenUtc2 ? t('lastUpdateAria', { time: `${seenUtc2} UTC+2` }) : null,
+    accuracyLabel,
+  ]
     .filter(Boolean)
     .join(', ')
 
@@ -166,7 +172,7 @@ export function StatusStrip({
                 {live ? <span className="size-2 rounded-full bg-primary-foreground" aria-hidden /> : null}
                 {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
               </Badge>
-              {sourceLabel || seenTime || accuracyLabel ? (
+              {sourceLabel || seenUtc2 || accuracyLabel ? (
                 <div className="mt-1.5 flex flex-col items-center gap-0.5 text-center">
                   {sourceLabel ? (
                     <p className="flex items-center gap-0.5 text-xs font-medium leading-none text-muted-foreground">
@@ -174,12 +180,17 @@ export function StatusStrip({
                       {sourceLabel}
                     </p>
                   ) : null}
-                  {seenTime ? (
+                  {seenUtc2 ? (
                     <p
                       className="tabular-nums text-xs leading-none text-muted-foreground"
                       title={seenIso ? formatSeen(seenIso, locale) : undefined}
                     >
-                      {seenTime}
+                      {seenUtc2} UTC+2
+                    </p>
+                  ) : null}
+                  {seenShip && seenShip !== seenUtc2 ? (
+                    <p className="tabular-nums text-xs leading-none text-muted-foreground">
+                      {seenShip} {t('clockShip')}
                     </p>
                   ) : null}
                   {accuracyLabel ? (
@@ -248,6 +259,7 @@ export function StatusStrip({
               <p role="status">{t('statusError')}</p>
             </div>
           ) : null}
+          <DualClock locale={locale} shipTz={snapshot.shipTz} className="mt-1.5" />
         </section>
         <section
           ref={bindPage(1)}
@@ -398,6 +410,30 @@ function RouteRow({
   )
 }
 
+function DualTimes({
+  local,
+  utc2,
+}: {
+  local: string | null
+  utc2: string
+}) {
+  const { t } = useTranslation()
+  return (
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0">
+      {local ? (
+        <span className="whitespace-nowrap">
+          <span className="font-semibold tabular-nums text-foreground">{local}</span>
+          <span className="ml-1">{t('clockShip')}</span>
+        </span>
+      ) : null}
+      <span className="whitespace-nowrap">
+        <span className="font-semibold tabular-nums text-foreground">{utc2}</span>
+        <span className="ml-1">UTC+2</span>
+      </span>
+    </span>
+  )
+}
+
 function ScheduleInline({
   label,
   parts,
@@ -406,11 +442,11 @@ function ScheduleInline({
   parts: ReturnType<typeof formatArrivalParts>
 }) {
   return (
-    <span>
-      {label}{' '}
-      <span className="font-medium tabular-nums text-foreground/80">
-        {parts.day} {parts.time} {parts.offset}
+    <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+      <span>
+        {label} {parts.day}
       </span>
+      <DualTimes local={parts.local} utc2={parts.utc2} />
     </span>
   )
 }
@@ -423,17 +459,11 @@ function ScheduleStamp({
   parts: ReturnType<typeof formatArrivalParts>
 }) {
   return (
-    <span className="text-xs font-medium leading-snug text-muted-foreground sm:text-sm">
-      {label} {parts.day}{' '}
-      <span className="font-semibold tabular-nums text-foreground">
-        {parts.time} {parts.offset}
+    <span className="min-w-0 text-xs font-medium leading-snug text-muted-foreground sm:text-sm">
+      <span className="block">
+        {label} {parts.day}
       </span>
-      {parts.homeTime ? (
-        <>
-          {' · '}
-          <span className="font-semibold tabular-nums text-foreground">{parts.homeTime} UTC+2</span>
-        </>
-      ) : null}
+      <DualTimes local={parts.local} utc2={parts.utc2} />
     </span>
   )
 }

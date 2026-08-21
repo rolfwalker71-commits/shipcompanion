@@ -2,6 +2,8 @@ import type { Locale } from './types.ts'
 
 /** Family display zone: CEST (UTC+2) in summer, CET (UTC+1) in winter. */
 export const DISPLAY_TZ = 'Europe/Berlin'
+/** Fixed family offset shown next to ship-local times. */
+export const UTC2_TZ = 'Etc/GMT-2'
 
 function ymd(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -63,44 +65,38 @@ function stamp(head: string, date: Date, withUtc: boolean): string {
   return `${head} ${offset} (${clock(date, 'de', 'UTC')} UTC)`
 }
 
-/** Arrival line: day in words, clock always HH:mm in Europe/Berlin. */
+/** Arrival line: day in words, ship-local clock plus UTC+2. */
 export function formatArrivalParts(
   iso: string,
   locale: Locale,
-): { day: string; time: string; offset: string; homeTime: string | null } {
+  shipTz?: string | null,
+): { day: string; utc2: string; local: string | null; offset: string } {
   const date = new Date(iso)
-  const time = clock(date, locale, DISPLAY_TZ)
-  const offset = utcOffsetLabel(date)
-  const offsetHours = zoneOffsetHours(date, DISPLAY_TZ)
-  const homeTime = offsetHours === 2 ? null : clock(date, locale, 'Etc/GMT-2')
-  const dayStamp = ymd(date, DISPLAY_TZ)
-  const today = ymd(new Date(), DISPLAY_TZ)
-  if (dayStamp === today) return { day: locale === 'de' ? 'heute' : 'today', time, offset, homeTime }
+  const utc2 = clock(date, locale, UTC2_TZ)
+  let local: string | null = null
+  if (shipTz) {
+    try {
+      local = clock(date, locale, shipTz)
+    } catch {
+      local = null
+    }
+  }
+  const dayStamp = ymd(date, UTC2_TZ)
+  const today = ymd(new Date(), UTC2_TZ)
+  const offset = 'UTC+2'
+  if (dayStamp === today) return { day: locale === 'de' ? 'heute' : 'today', utc2, local, offset }
   if (dayStamp === addCalendarDays(today, 1)) {
-    return { day: locale === 'de' ? 'morgen' : 'tomorrow', time, offset, homeTime }
+    return { day: locale === 'de' ? 'morgen' : 'tomorrow', utc2, local, offset }
   }
   const day = new Intl.DateTimeFormat(locale === 'de' ? 'de-DE' : 'en-GB', {
-    timeZone: DISPLAY_TZ,
+    timeZone: UTC2_TZ,
     weekday: 'short',
     day: 'numeric',
     month: 'short',
   }).format(date)
-  return { day, time, offset, homeTime }
+  return { day, utc2, local, offset }
 }
 
-function zoneOffsetHours(date: Date, timeZone: string): number {
-  const raw = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    timeZoneName: 'shortOffset',
-    hour: '2-digit',
-  })
-    .formatToParts(date)
-    .find((part) => part.type === 'timeZoneName')?.value
-  const match = raw?.match(/([+-])(\d{1,2})(?::?(\d{2}))?/)
-  if (!match) return 0
-  const sign = match[1] === '-' ? -1 : 1
-  return sign * (Number(match[2]) + (match[3] ? Number(match[3]) / 60 : 0))
-}
 export function formatWhen(iso: string, locale: Locale, withUtc = false): string {
   const date = new Date(iso)
   const relative = relativeHead(date, locale)

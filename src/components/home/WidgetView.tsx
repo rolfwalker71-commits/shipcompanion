@@ -6,7 +6,7 @@ import { useCompactUi } from '@/lib/compact'
 import { useSnapshot } from '@/lib/use-snapshot'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
+import { DualClock } from './TodayPanel'
 
 type WidgetViewProps = {
   trip: Trip
@@ -66,19 +66,8 @@ export function WidgetView({ trip }: WidgetViewProps) {
               ) : null}
             </div>
             <p className="text-base leading-relaxed">{snapshot.narrative || t('narrativeEmpty')}</p>
-            <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              <span>
-                {t('clockHome')}{' '}
-                <span className="font-semibold tabular-nums text-foreground">
-                  {formatClock(new Date(), locale, DISPLAY_TZ)}
-                </span>
-              </span>
-              <span>
-                {t('clockShip')}{' '}
-                <span className="font-semibold tabular-nums text-foreground">
-                  {formatClock(new Date(), locale, snapshot.shipTz || DISPLAY_TZ)}
-                </span>
-              </span>
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <DualClock locale={locale} shipTz={snapshot.shipTz} className="text-sm" />
               {snapshot.sun ? (
                 <>
                   <span className="inline-flex items-center gap-1">

@@ -2,9 +2,47 @@ import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { Locale, PortStop, SnapshotResponse } from '@shared/types.ts'
-import { DISPLAY_TZ, formatClock } from '@shared/time.ts'
+import { DISPLAY_TZ, UTC2_TZ, formatClock } from '@shared/time.ts'
 import { cn } from '@/lib/utils'
 import { BoardPhoto } from './BoardPhoto'
+
+type DualClockProps = {
+  locale: Locale
+  shipTz?: string | null
+  className?: string
+}
+
+export function DualClock({ locale, shipTz, className }: DualClockProps) {
+  const { t } = useTranslation()
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const homeClock = formatClock(now, locale, UTC2_TZ)
+  const shipClock = formatClock(now, locale, shipTz || DISPLAY_TZ)
+
+  return (
+    <div
+      className={cn(
+        'inline-flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:text-sm',
+        className,
+      )}
+    >
+      <span className="whitespace-nowrap">
+        {t('clockHome')}{' '}
+        <span className="font-semibold tabular-nums text-foreground">{homeClock}</span>
+        <span className="ml-1">UTC+2</span>
+      </span>
+      <span className="whitespace-nowrap">
+        {t('clockShip')}{' '}
+        <span className="font-semibold tabular-nums text-foreground">{shipClock}</span>
+      </span>
+    </div>
+  )
+}
 
 type TodayPanelProps = {
   snapshot: SnapshotResponse
@@ -14,16 +52,7 @@ type TodayPanelProps = {
 
 export function TodayPanel({ snapshot, locale, stops }: TodayPanelProps) {
   const { t } = useTranslation()
-  const [now, setNow] = useState(() => new Date())
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
-
   const shipTz = snapshot.shipTz || DISPLAY_TZ
-  const homeClock = formatClock(now, locale, DISPLAY_TZ)
-  const shipClock = formatClock(now, locale, shipTz)
   const sunrise = snapshot.sun ? formatClock(new Date(snapshot.sun.sunrise), locale, shipTz) : null
   const sunset = snapshot.sun ? formatClock(new Date(snapshot.sun.sunset), locale, shipTz) : null
   const greeting = snapshot.narrative?.trim() || t('narrativeEmpty')
@@ -36,15 +65,8 @@ export function TodayPanel({ snapshot, locale, stops }: TodayPanelProps) {
     <div className="flex min-w-0 items-stretch gap-3">
       <div className="min-w-0 flex-1 space-y-2">
         <p className="line-clamp-2 text-sm leading-snug text-foreground sm:text-base">{greeting}</p>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
-          <span>
-            {t('clockHome')}{' '}
-            <span className="font-semibold tabular-nums text-foreground">{homeClock}</span>
-          </span>
-          <span>
-            {t('clockShip')}{' '}
-            <span className="font-semibold tabular-nums text-foreground">{shipClock}</span>
-          </span>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:text-sm">
+          <DualClock locale={locale} shipTz={snapshot.shipTz} />
           {sunrise ? (
             <span className="inline-flex items-center gap-1">
               <Sun className="h-3.5 w-3.5 text-amber-500" aria-hidden />

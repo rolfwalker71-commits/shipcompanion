@@ -68,6 +68,19 @@ function toDeg(radians: number): number {
   return (radians * 180) / Math.PI
 }
 
+/** Planned route is ignored for camera/status when GPS is farther than this from every stop. */
+export const OFF_ITINERARY_KM = 400
+
+export function nearestStopKm(point: GeoPoint, stops: GeoPoint[]): number | null {
+  if (!stops.length) return null
+  return Math.min(...stops.map((stop) => haversineKm(point, stop)))
+}
+
+export function isOffItinerary(point: GeoPoint, stops: GeoPoint[]): boolean {
+  const nearest = nearestStopKm(point, stops)
+  return nearest != null && nearest > OFF_ITINERARY_KM
+}
+
 export function haversineKm(a: GeoPoint, b: GeoPoint): number {
   const dLat = toRad(b.lat - a.lat)
   const dLng = toRad(b.lng - a.lng)

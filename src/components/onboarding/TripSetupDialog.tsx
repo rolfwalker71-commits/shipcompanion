@@ -53,9 +53,9 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
     setPresetId(preset?.id ?? presets[0].id)
     setStartDate(trip?.startDate ?? toDateInput((preset ?? presets[0]).stops[0].arriveAt))
     setEndDate(trip?.endDate ?? toDateInput((preset ?? presets[0]).stops[(preset ?? presets[0]).stops.length - 1].departAt))
-    setCustomName(trip?.customShip?.name ?? '')
-    setCustomMmsi(trip?.customShip?.mmsi ?? '')
-    setCustomImo(trip?.customShip?.imo ?? '')
+    setCustomName(trip?.customShip?.name ?? current?.name ?? '')
+    setCustomMmsi(trip?.mmsi || trip?.customShip?.mmsi || current?.mmsi || '')
+    setCustomImo(trip?.imo || trip?.customShip?.imo || current?.imo || '')
     setSaveError(false)
     setBusy(false)
   }, [lines, open, presets, trip])
@@ -68,6 +68,12 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
 
   function changeShip(id: string) {
     setShipId(id)
+    const catalog = id === CUSTOM_SHIP_ID ? undefined : shipById(id)
+    if (catalog) {
+      setCustomName(catalog.name)
+      setCustomMmsi(catalog.mmsi)
+      setCustomImo(catalog.imo)
+    }
     const match = presets.find((preset) => preset.shipId === id)
     if (match) applyPreset(match.id)
   }
@@ -83,16 +89,22 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
   async function submit() {
     const preset = presetById(presetId) ?? presets[0]
     const line = lines.find((item) => item.id === lineId)
-    const mmsi = customMmsi.replace(/\D/g, '')
-    const imo = customImo.replace(/\D/g, '')
-    if (shipId === CUSTOM_SHIP_ID && (!customName.trim() || mmsi.length < 9)) return
+    const catalog = shipId === CUSTOM_SHIP_ID ? undefined : shipById(shipId)
+    const mmsi = (customMmsi || catalog?.mmsi || '').replace(/\D/g, '')
+    const imo = (customImo || catalog?.imo || '').replace(/\D/g, '')
+    if (!mmsi || mmsi.length < 9) {
+      setSaveError(true)
+      return
+    }
+    if (shipId === CUSTOM_SHIP_ID && !customName.trim()) return
     setBusy(true)
     setSaveError(false)
     try {
-      const catalog = shipId === CUSTOM_SHIP_ID ? undefined : shipById(shipId)
       await onSave({
-        id: (shipId === CUSTOM_SHIP_ID ? mmsi : catalog?.mmsi) || shipId,
+        id: trip?.id || mmsi || catalog?.mmsi || shipId,
         shipId,
+        mmsi,
+        imo: imo || undefined,
         customShip:
           shipId === CUSTOM_SHIP_ID
             ? {
@@ -156,41 +168,41 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
             </Select>
           </div>
           {shipId === CUSTOM_SHIP_ID ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="custom-name">{t('customShipName')}</Label>
-                <Input id="custom-name" value={customName} onChange={(event) => setCustomName(event.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="custom-mmsi">{t('customMmsi')}</Label>
-                <Input
-                  id="custom-mmsi"
-                  inputMode="numeric"
-                  value={customMmsi}
-                  onChange={(event) => setCustomMmsi(event.target.value)}
-                />
-                <p className="text-xs leading-relaxed text-muted-foreground">{t('mmsiHint')}</p>
-                <a
-                  className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
-                  href={`https://www.vesselfinder.com/vessels?name=${encodeURIComponent(customName.trim() || 'Legend of the Seas')}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {t('mmsiLookup')}
-                </a>
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="custom-imo">{t('customImo')}</Label>
-                <Input
-                  id="custom-imo"
-                  inputMode="numeric"
-                  value={customImo}
-                  onChange={(event) => setCustomImo(event.target.value)}
-                />
-                <p className="text-xs leading-relaxed text-muted-foreground">{t('imoHint')}</p>
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="custom-name">{t('customShipName')}</Label>
+              <Input id="custom-name" value={customName} onChange={(event) => setCustomName(event.target.value)} />
             </div>
           ) : null}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="custom-mmsi">{t('customMmsi')}</Label>
+              <Input
+                id="custom-mmsi"
+                inputMode="numeric"
+                value={customMmsi}
+                onChange={(event) => setCustomMmsi(event.target.value)}
+              />
+              <p className="text-xs leading-relaxed text-muted-foreground">{t('mmsiHint')}</p>
+              <a
+                className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
+                href={`https://www.vesselfinder.com/vessels?name=${encodeURIComponent(customName.trim() || shipById(shipId)?.name || 'Legend of the Seas')}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t('mmsiLookup')}
+              </a>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="custom-imo">{t('customImo')}</Label>
+              <Input
+                id="custom-imo"
+                inputMode="numeric"
+                value={customImo}
+                onChange={(event) => setCustomImo(event.target.value)}
+              />
+              <p className="text-xs leading-relaxed text-muted-foreground">{t('imoHint')}</p>
+            </div>
+          </div>
           <div className="space-y-2">
             <Label>{t('route')}</Label>
             <Select value={presetId} onValueChange={applyPreset}>

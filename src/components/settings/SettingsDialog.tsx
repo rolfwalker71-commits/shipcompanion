@@ -1,3 +1,4 @@
+import { Pencil, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -27,7 +28,7 @@ type SettingsDialogProps = {
   selectedMmsi?: string
   onSelectShip?: (id: string) => void
   onAddShip?: () => void
-  onEditTrip: () => void
+  onEditShip?: (id: string) => void
   onRemoveShip?: (id: string) => void | Promise<void>
 }
 
@@ -39,7 +40,7 @@ export function SettingsDialog({
   selectedMmsi = '',
   onSelectShip,
   onAddShip,
-  onEditTrip,
+  onEditShip,
   onRemoveShip,
 }: SettingsDialogProps) {
   const { t, i18n } = useTranslation()
@@ -140,7 +141,11 @@ export function SettingsDialog({
       return t('trackingVesselsError', { error: vesselsApi.lastError })
     }
     const when = vesselsApi.nextFetchAt ? formatWhen(vesselsApi.nextFetchAt, locale) : t('trackingDockedSoon')
-    return t('trackingVesselsOn', { minutes: vesselsApi.intervalMinutes, when, count: vesselsApi.vesselCount })
+    const line = t('trackingVesselsOn', { minutes: vesselsApi.intervalMinutes, when, count: vesselsApi.vesselCount })
+    if (vesselsApi.lastHistoryError) {
+      return `${line} ${t('trackingVesselsHistoryError', { error: vesselsApi.lastHistoryError })}`
+    }
+    return line
   }
 
   function saveVesselsInterval() {
@@ -290,28 +295,54 @@ export function SettingsDialog({
                 <div className="flex flex-col gap-2">
                   {ships.map((row) => {
                     const id = tripKey(row)
-                    const name = tripShip(row)?.name ?? row.shipId
+                    const ship = tripShip(row)
+                    const name = ship?.name ?? row.shipId
                     const active = id === selectedId
+                    const ids = [ship?.imo ? `IMO ${ship.imo}` : null, ship?.mmsi ? `MMSI ${ship.mmsi}` : null]
+                      .filter(Boolean)
+                      .join(' · ')
                     return (
-                      <div key={id} className="flex items-center gap-2">
+                      <div key={id} className="flex items-start gap-2">
                         <Button
                           variant={active ? 'default' : 'secondary'}
-                          className="min-w-0 flex-1 justify-start"
+                          className="h-auto min-h-11 min-w-0 flex-1 flex-col items-start justify-center gap-0.5 py-2 text-left whitespace-normal"
                           onClick={() => onSelectShip?.(id)}
                         >
-                          {name}
+                          <span>{name}</span>
+                          {ids ? (
+                            <span className={active ? 'text-xs font-normal text-primary-foreground/80' : 'text-xs font-normal text-muted-foreground'}>
+                              {ids}
+                            </span>
+                          ) : null}
                         </Button>
-                        {onRemoveShip && ships.length > 1 ? (
+                        {onEditShip ? (
+                          <Button
+                            variant="secondary"
+                            size="icon"
+                            className="shrink-0"
+                            aria-label={t('fleetEdit')}
+                            onClick={() => {
+                              onSelectShip?.(id)
+                              onOpenChange(false)
+                              onEditShip(id)
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {onRemoveShip ? (
                           <Button
                             variant="destructive"
+                            size="icon"
                             className="shrink-0"
+                            aria-label={t('fleetRemove')}
                             disabled={removeBusy === id}
                             onClick={() => {
                               setRemoveBusy(id)
                               void Promise.resolve(onRemoveShip(id)).finally(() => setRemoveBusy(null))
                             }}
                           >
-                            {t('fleetRemove')}
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         ) : null}
                       </div>
@@ -559,12 +590,12 @@ export function SettingsDialog({
               </SelectContent>
             </Select>
           </div>
-          {isAdmin ? (
+          {isAdmin && onEditShip && selectedId ? (
             <Button
               variant="secondary"
               onClick={() => {
                 onOpenChange(false)
-                onEditTrip()
+                onEditShip(selectedId)
               }}
             >
               {t('editTrip')}

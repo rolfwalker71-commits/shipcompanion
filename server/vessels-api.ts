@@ -1,7 +1,7 @@
 import type { VesselsApiStatus } from '../shared/types.ts'
 import { tripShip } from '../shared/ships.ts'
 import { listFleet } from './fleet-store.ts'
-import { ingestFix, ingestHistory, rememberVoyage, type LiveFix } from './ais.ts'
+import { ingestFix, ingestHistory, rememberVoyage, aisCacheReady, vesselsHistoryCount, type LiveFix } from './ais.ts'
 import { readJsonSync, writeJson } from './persist.ts'
 
 function pinConfigured(): boolean {
@@ -21,6 +21,7 @@ type Store = {
   intervalMinutes: number | null
   fixes: Record<string, VesselsFix>
   historyAt: Record<string, number>
+  historyTriedAt: Record<string, number>
   historySeeded: Record<string, boolean>
   lastHistoryAt: number | null
   lastHistoryError: string | null
@@ -49,6 +50,7 @@ function emptyStore(): Store {
     intervalMinutes: null,
     fixes: {},
     historyAt: {},
+    historyTriedAt: {},
     historySeeded: {},
     lastHistoryAt: null,
     lastHistoryError: null,
@@ -61,6 +63,7 @@ function migrateStore(raw: Store): Store {
     ...raw,
     fixes: raw.fixes && typeof raw.fixes === 'object' ? raw.fixes : {},
     historyAt: raw.historyAt && typeof raw.historyAt === 'object' ? raw.historyAt : {},
+    historyTriedAt: raw.historyTriedAt && typeof raw.historyTriedAt === 'object' ? raw.historyTriedAt : {},
     historySeeded: raw.historySeeded && typeof raw.historySeeded === 'object' ? raw.historySeeded : {},
   }
 }
@@ -114,7 +117,7 @@ function nextFetchTs(): number | null {
 
 function nextHistoryTs(): number | null {
   if (!apiKey()) return null
-  const stamps = Object.values(store.historyAt)
+  const stamps = [...Object.values(store.historyAt), ...Object.values(store.historyTriedAt)]
   if (!stamps.length) return Date.now()
   return Math.min(...stamps) + DAY_MS
 }
@@ -129,7 +132,8 @@ export function vesselsApiStatus(): VesselsApiStatus {
     nextFetchAt: next ? new Date(next).toISOString() : null,
     lastHistoryAt: store.lastHistoryAt ? new Date(store.lastHistoryAt).toISOString() : null,
     nextHistoryAt: nextHistory ? new Date(nextHistory).toISOString() : null,
-    lastError: store.lastError ?? store.lastHistoryError,
+    lastError: store.lastError,
+    lastHistoryError: store.lastHistoryError,
     vesselCount: listFleet().length,
     pinConfigured: pinConfigured(),
   }
@@ -209,10 +213,11 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
     for (const raw of rows) {
       const parsed = parseVessel(raw)
       if (!parsed) continue
-      store.fixes[parsed.mmsi] = parsed.fix
-      ingestFix(parsed.mmsi, parsed.fix, 'external')
+      const mmsi = matchFleetMmsi(parsed, ships)
+      store.fixes[mmsi] = parsed.fix
+      ingestFix(mmsi, parsed.fix, 'external')
       if (parsed.fix.destination || parsed.fix.eta || parsed.fix.name) {
-        rememberVoyage(parsed.mmsi, {
+        rememberVoyage(mmsi, {
           destination: parsed.fix.destination,
           eta: parsed.fix.eta,
           name: parsed.fix.name,
@@ -234,11 +239,21 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
   }
 }
 
-function parseVessel(raw: unknown): { mmsi: string; fix: VesselsFix } | null {
+function matchFleetMmsi(
+  parsed: { mmsi: string; imo: string },
+  ships: { mmsi: string; imo: string }[],
+): string {
+  if (ships.some((ship) => ship.mmsi === parsed.mmsi)) return parsed.mmsi
+  const byImo = ships.find((ship) => ship.imo && ship.imo === parsed.imo)
+  return byImo?.mmsi || parsed.mmsi
+}
+
+function parseVessel(raw: unknown): { mmsi: string; imo: string; fix: VesselsFix } | null {
   if (!raw || typeof raw !== 'object') return null
   const row = raw as Record<string, unknown>
   const mmsi = digits(row.mmsi)
   if (!mmsi) return null
+  const imo = digits(row.imo)
   const position = isRecord(row.position) ? row.position : row
   const lat = readCoord(position.latitude ?? position.lat)
   const lng = readCoord(position.longitude ?? position.lng ?? position.lon)
@@ -252,6 +267,7 @@ function parseVessel(raw: unknown): { mmsi: string; fix: VesselsFix } | null {
   const etaTs = parseUtc(etaRaw)
   return {
     mmsi,
+    imo,
     fix: {
       lat,
       lng,
@@ -328,6 +344,10 @@ export async function refreshHistoryIfNeeded(): Promise<void> {
     .filter((ship): ship is NonNullable<typeof ship> => Boolean(ship?.mmsi))
   if (!ships.length) return
   const due = ships.filter((ship) => {
+    if (vesselsHistoryCount(ship.mmsi) === 0) {
+      const lastTry = store.historyTriedAt[ship.mmsi] ?? 0
+      return lastTry === 0 || Date.now() - lastTry >= DAY_MS
+    }
     const last = store.historyAt[ship.mmsi] ?? 0
     return Date.now() - last >= DAY_MS
   })
@@ -344,33 +364,29 @@ export async function refreshHistoryIfNeeded(): Promise<void> {
 
 async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]): Promise<void> {
   let lastError: string | null = null
-  let any = false
   for (const ship of ships) {
     const seeded = Boolean(store.historySeeded[ship.mmsi])
     const hours = seeded ? HISTORY_DAILY_HOURS : HISTORY_SEED_HOURS
-    const params = new URLSearchParams({ hours: String(hours) })
-    if (ship.mmsi) params.set('mmsi', ship.mmsi)
-    else if (ship.imo) params.set('imo', ship.imo)
+    store.historyTriedAt[ship.mmsi] = Date.now()
     try {
-      const response = await fetch(`${BASE}/vessels/track?${params}`, {
-        headers: { 'X-API-Key': apiKey(), Accept: 'application/json' },
-        signal: AbortSignal.timeout(20_000),
-      })
-      const text = await response.text()
-      if (!response.ok) {
-        lastError = parseError(text) || `HTTP ${response.status}`
-        console.warn(`Vessels API track ${ship.mmsi}:`, lastError)
+      const result = await fetchTrackForShip(ship, hours)
+      if (!result.ok) {
+        lastError = `${ship.name}: ${result.error}`
+        console.warn(`Vessels API track ${ship.mmsi}:`, result.error)
         continue
       }
-      const json = JSON.parse(text) as { success?: boolean; message?: string; data?: unknown }
-      if (json.success === false) {
-        lastError = json.message || 'track_error'
-        continue
-      }
-      const parsed = parseTrack(json.data)
+      const parsed = parseTrack(result.data)
       if (!parsed.history.length && !parsed.fix) {
-        lastError = 'no_track'
+        lastError = `${ship.name}: no_track`
         continue
+      }
+      if (isRecord(result.data)) {
+        const rawHist = Array.isArray(result.data.position_history) ? result.data.position_history.length : 0
+        console.log(
+          `Vessels API track ${ship.name} ${parsed.history.length} pts (${hours}h) raw_history=${rawHist} keys=${Object.keys(result.data).join(',')}`,
+        )
+      } else {
+        console.log(`Vessels API track ${ship.name} ${parsed.history.length} pts (${hours}h)`)
       }
       if (parsed.history.length) ingestHistory(ship.mmsi, parsed.history)
       if (parsed.fix) {
@@ -387,15 +403,56 @@ async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]
       store.historyAt[ship.mmsi] = Date.now()
       store.historySeeded[ship.mmsi] = true
       store.lastHistoryAt = Date.now()
-      any = true
-      console.log(`Vessels API track ${ship.name} ${parsed.history.length} pts (${hours}h)`)
     } catch (error) {
-      lastError = error instanceof Error ? error.message : 'network_error'
+      lastError = `${ship.name}: ${error instanceof Error ? error.message : 'network_error'}`
       console.warn(`Vessels API track ${ship.mmsi}:`, lastError)
     }
   }
-  store.lastHistoryError = any ? null : lastError
+  store.lastHistoryError = lastError
   persist()
+}
+
+type TrackResult = { ok: true; data: unknown } | { ok: false; error: string }
+
+async function fetchTrackForShip(
+  ship: { mmsi: string; imo: string },
+  hours: number,
+): Promise<TrackResult> {
+  const first = await fetchTrack(ship.mmsi ? { mmsi: ship.mmsi } : { imo: ship.imo }, hours)
+  if (first.ok) return first
+  if (ship.mmsi && ship.imo && isMissingIdentifier(first.error)) {
+    const retry = await fetchTrack({ imo: ship.imo }, hours)
+    if (retry.ok) return retry
+    return { ok: false, error: retry.error }
+  }
+  return first
+}
+
+async function fetchTrack(
+  id: { mmsi?: string; imo?: string },
+  hours: number,
+): Promise<TrackResult> {
+  const params = new URLSearchParams({ hours: String(hours) })
+  if (id.mmsi) params.set('mmsi', id.mmsi)
+  else if (id.imo) params.set('imo', id.imo)
+  const response = await fetch(`${BASE}/vessels/track?${params}`, {
+    headers: { 'X-API-Key': apiKey(), Accept: 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  })
+  const text = await response.text()
+  if (!response.ok) {
+    return { ok: false, error: parseError(text) || `HTTP ${response.status}` }
+  }
+  const json = JSON.parse(text) as { success?: boolean; message?: string; data?: unknown }
+  if (json.success === false) {
+    return { ok: false, error: json.message || 'track_error' }
+  }
+  return { ok: true, data: json.data }
+}
+
+function isMissingIdentifier(error: string): boolean {
+  const text = error.toLowerCase()
+  return text.includes('not found') || text.includes('identifier') || text.includes('no vessel')
 }
 
 function parseTrack(
@@ -404,43 +461,27 @@ function parseTrack(
   const empty = { history: [] as LiveFix[], fix: null, destination: null, eta: null, name: null }
   if (!isRecord(data)) return empty
   const vessel = isRecord(data.vessel) ? data.vessel : data
-  const current = isRecord(data.current_position) ? data.current_position : null
+  const current = isRecord(data.current_position)
+    ? data.current_position
+    : isRecord(data.currentPosition)
+      ? data.currentPosition
+      : null
   const route = isRecord(data.route) ? data.route : null
-  const historyRaw = Array.isArray(data.position_history) ? data.position_history : []
   const history: LiveFix[] = []
-  for (const row of historyRaw) {
-    if (!isRecord(row)) continue
-    const lat = readCoord(row.latitude ?? row.lat)
-    const lng = readCoord(row.longitude ?? row.lng ?? row.lon)
-    const ts = parseUtc(row.timestamp_utc ?? row.timestamp)
-    if (lat == null || lng == null || ts == null) continue
-    history.push({
-      lat,
-      lng,
-      ts,
-      sog: readSog(row.speed_knots ?? row.speed),
-      cog: readCourse(row.course_degrees ?? row.course),
-      heading: readCourse(row.heading_degrees ?? row.heading),
-      navStatus: navStatus(row.navigational_status),
-    })
+  const seen = new Set<string>()
+  function addFix(fix: LiveFix | null) {
+    if (!fix) return
+    const key = `${fix.ts}:${fix.lat.toFixed(5)}:${fix.lng.toFixed(5)}`
+    if (seen.has(key)) return
+    seen.add(key)
+    history.push(fix)
   }
+  for (const rows of historyBags(data)) {
+    for (const row of rows) addFix(readHistoryFix(row))
+  }
+  const fix = readHistoryFix(current)
+  addFix(fix)
   history.sort((a, b) => a.ts - b.ts)
-  let fix: LiveFix | null = null
-  if (current) {
-    const lat = readCoord(current.latitude ?? current.lat)
-    const lng = readCoord(current.longitude ?? current.lng ?? current.lon)
-    if (lat != null && lng != null) {
-      fix = {
-        lat,
-        lng,
-        ts: parseUtc(current.timestamp_utc ?? current.timestamp) ?? Date.now(),
-        sog: readSog(current.speed_knots ?? current.speed),
-        cog: readCourse(current.course_degrees ?? current.course),
-        heading: readCourse(current.heading_degrees ?? current.heading),
-        navStatus: navStatus(current.navigational_status),
-      }
-    }
-  }
   const dest = readText(route?.destination_port) ?? readText(current?.destination)
   const etaTs = parseUtc(route?.eta ?? current?.eta)
   return {
@@ -449,6 +490,54 @@ function parseTrack(
     destination: dest,
     eta: etaTs ? new Date(etaTs).toISOString() : null,
     name: readText(vessel.name),
+  }
+}
+
+function historyBags(data: Record<string, unknown>): unknown[][] {
+  const bags: unknown[][] = []
+  const push = (value: unknown) => {
+    if (Array.isArray(value) && value.length) bags.push(value)
+  }
+  push(data.position_history)
+  push(data.positionHistory)
+  push(data.history)
+  push(data.positions)
+  push(data.track)
+  push(data.track_points)
+  if (isRecord(data.route)) {
+    push(data.route.position_history)
+    push(data.route.positions)
+    push(data.route.track)
+    push(data.route.path)
+  }
+  return bags
+}
+
+function readHistoryFix(row: unknown): LiveFix | null {
+  if (!isRecord(row)) return null
+  const pos = isRecord(row.position) ? row.position : row
+  const lat = readCoord(pos.latitude ?? pos.lat ?? row.latitude ?? row.lat)
+  const lng = readCoord(pos.longitude ?? pos.lng ?? pos.lon ?? row.longitude ?? row.lng ?? row.lon)
+  const ts = parseUtc(
+    row.timestamp_utc ??
+      row.timestampUtc ??
+      row.timestamp ??
+      row.time_utc ??
+      row.timeUtc ??
+      row.time ??
+      pos.timestamp_utc ??
+      pos.timestamp ??
+      row.ts,
+  )
+  if (lat == null || lng == null || ts == null) return null
+  return {
+    lat,
+    lng,
+    ts,
+    sog: readSog(row.speed_knots ?? row.speed ?? pos.speed_knots ?? pos.speed),
+    cog: readCourse(row.course_degrees ?? row.course ?? pos.course_degrees ?? pos.course),
+    heading: readCourse(row.heading_degrees ?? row.heading ?? pos.heading_degrees ?? pos.heading),
+    navStatus: navStatus(row.navigational_status ?? pos.navigational_status),
   }
 }
 
@@ -466,7 +555,9 @@ function parseError(text: string): string | null {
 
 export function startVesselsPoll(): void {
   if (pollTimer) return
-  void refreshVesselsIfNeeded().then(() => refreshHistoryIfNeeded())
+  void aisCacheReady()
+    .then(() => refreshVesselsIfNeeded())
+    .then(() => refreshHistoryIfNeeded())
   pollTimer = setInterval(() => {
     void refreshVesselsIfNeeded().then(() => refreshHistoryIfNeeded())
   }, 60_000)

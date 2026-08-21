@@ -188,8 +188,10 @@ export function StatusStrip({
                 </div>
               ) : null}
             </div>
-            <div className="min-w-0 flex-1" aria-label={routeAria}>
-              {mooredAt ? (
+            <div className="min-w-0 flex-1" aria-label={snapshot.offItinerary ? t('offItinerary') : routeAria}>
+              {snapshot.offItinerary ? (
+                <p className="text-sm font-medium leading-snug text-foreground sm:text-base">{t('offItinerary')}</p>
+              ) : mooredAt ? (
                 <>
                   <p className="flex min-w-0 items-start gap-1.5 text-base font-semibold leading-snug sm:text-lg">
                     <MapPinned className="mt-0.5 h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />

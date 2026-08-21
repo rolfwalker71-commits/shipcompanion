@@ -4,6 +4,7 @@ import L from 'leaflet'
 import { Map as MapIcon, Satellite } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { GeoPoint } from '@shared/types.ts'
+import { haversineKm, OFF_ITINERARY_KM } from '@shared/geo.ts'
 import { Button } from '@/components/ui/button'
 import { useMapStyle, type MapStyle } from '@/lib/map-style'
 import { useTheme } from '@/lib/theme'
@@ -73,7 +74,9 @@ function MapViewport({ frame, ship }: { frame: GeoPoint[]; ship: GeoPoint }) {
   const shipRef = useRef(ship)
   frameRef.current = frame
   shipRef.current = ship
-  const key = boundsKey(frame)
+  const key = frame.length
+    ? boundsKey(frame)
+    : `${ship.lat.toFixed(1)},${ship.lng.toFixed(1)}`
 
   useEffect(() => {
     const markUser = () => {
@@ -93,6 +96,14 @@ function MapViewport({ frame, ship }: { frame: GeoPoint[]; ship: GeoPoint }) {
       const current = [shipRef.current, ...frameRef.current]
       if (userMoved.current || current.length === 0) return
       map.invalidateSize()
+      if (current.length === 1) {
+        fitting.current = true
+        map.setView([current[0].lat, current[0].lng], 6, { animate: false })
+        map.once('moveend', () => {
+          fitting.current = false
+        })
+        return
+      }
       const bounds = L.latLngBounds(current.map((point) => [point.lat, point.lng]))
       if (!bounds.isValid()) return
       fitting.current = true
@@ -218,10 +229,12 @@ export function ShipMap({ position, path, track, gap = [], forecast, ports, head
   }, [ports])
 
   const fitFrame = useMemo(() => {
-    const next = ports.find((port) => port.kind === 'next' || port.kind === 'current')
-    const from = [...ports].reverse().find((port) => port.kind === 'past')
+    const nearby = ports.filter((port) => haversineKm(position, port) <= OFF_ITINERARY_KM)
+    if (!nearby.length) return []
+    const next = nearby.find((port) => port.kind === 'next' || port.kind === 'current')
+    const from = [...nearby].reverse().find((port) => port.kind === 'past')
     return [from, next].filter((port): port is MapPort => Boolean(port))
-  }, [ports])
+  }, [ports, position])
 
   return (
     <div className="relative h-full w-full" data-map-style={style}>

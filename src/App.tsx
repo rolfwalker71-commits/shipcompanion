@@ -35,11 +35,17 @@ export default function App() {
   const [tripReady, setTripReady] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [setupMode, setSetupMode] = useState<'add' | 'edit'>('edit')
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [widget, setWidget] = useState(() => isWidgetPath(window.location.pathname))
 
   const trip = useMemo(() => pickTrip(fleet, selectedId), [fleet, selectedId])
+  const setupTrip = useMemo(() => {
+    if (setupMode !== 'edit') return null
+    if (editingId) return fleet.find((row) => tripKey(row) === editingId) ?? trip
+    return trip
+  }, [editingId, fleet, setupMode, trip])
   const shipNames = useMemo(
     () =>
       fleet.map((row) => ({
@@ -152,21 +158,36 @@ export default function App() {
       {isAdmin ? (
         <TripSetupDialog
           open={setupOpen || needsSetup}
-          trip={setupMode === 'edit' ? trip : null}
+          trip={setupTrip}
           onOpenChange={(open) => {
             if (fleet.length) setSetupOpen(open)
+            if (!open) setEditingId(null)
           }}
           onSave={async (next) => {
+            const previousId = setupMode === 'edit' ? (editingId ?? (trip ? tripKey(trip) : null)) : null
             try {
               const saved = await pushRemoteTrip(next)
               const key = tripKey(saved)
+              if (previousId && previousId !== key) {
+                try {
+                  await removeRemoteTrip(previousId)
+                } catch {
+                  /* old id already gone */
+                }
+              }
               setFleet((current) => {
-                const without = current.filter((row) => tripKey(row) !== key && tripMmsi(row) !== tripMmsi(saved))
+                const without = current.filter(
+                  (row) =>
+                    tripKey(row) !== key &&
+                    tripMmsi(row) !== tripMmsi(saved) &&
+                    tripKey(row) !== previousId,
+                )
                 const merged = [...without, saved]
                 saveFleet(merged)
                 return merged
               })
               selectShip(key)
+              setEditingId(null)
             } catch (error) {
               if (!fleet.length) {
                 saveTrip(next)
@@ -187,10 +208,14 @@ export default function App() {
         selectedMmsi={trip ? tripMmsi(trip) : ''}
         onSelectShip={selectShip}
         onAddShip={() => {
+          setEditingId(null)
           setSetupMode('add')
           setSetupOpen(true)
         }}
-        onEditTrip={() => {
+        onEditShip={(id) => {
+          setSelectedId(id)
+          saveSelectedId(id)
+          setEditingId(id)
           setSetupMode('edit')
           setSetupOpen(true)
         }}

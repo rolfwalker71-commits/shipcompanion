@@ -17,13 +17,14 @@ export function WidgetView({ trip }: WidgetViewProps) {
   const compact = useCompactUi()
   const { snapshot, error, locale, live, estimated } = useSnapshot(trip)
   const speedKmh = formatSpeedKmh(snapshot?.motion?.sogKn)
+  const offItinerary = snapshot?.offItinerary ?? false
   const nextName = snapshot?.nextPort.name
-  const atPort = snapshot?.nextPort.atPort ?? false
+  const atPort = offItinerary ? false : (snapshot?.nextPort.atPort ?? false)
   const mooredAt = atPort
     ? snapshot?.nextPort.berthName ?? snapshot?.departure?.portName ?? nextName
     : null
-  const showNextLeg = Boolean(mooredAt && nextName && nextName !== mooredAt)
-  const headline = mooredAt ?? nextName
+  const showNextLeg = Boolean(!offItinerary && mooredAt && nextName && nextName !== mooredAt)
+  const headline = offItinerary ? t('offItinerary') : (mooredAt ?? nextName)
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-muted px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[calc(3.5rem+env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom))]">

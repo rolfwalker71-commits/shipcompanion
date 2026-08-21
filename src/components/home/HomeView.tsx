@@ -24,12 +24,16 @@ export function HomeView({ trip }: HomeViewProps) {
     return stop ? { lat: stop.lat, lng: stop.lng } : { lat: 41.9, lng: 5.2 }
   }, [snapshot?.position, trip.stops])
 
-  const path = snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng }))
+  const offRoute = Boolean(snapshot?.offItinerary)
+  const path = offRoute ? [] : (snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng })))
   const track = snapshot?.track ?? []
   const gap = snapshot?.gap ?? []
-  const forecast = snapshot?.forecast ?? []
+  const forecast = offRoute ? [] : (snapshot?.forecast ?? [])
 
-  const ports = useMemo(() => classifyPorts(trip.stops, locale, snapshot), [locale, snapshot, trip.stops])
+  const ports = useMemo(
+    () => (offRoute ? [] : classifyPorts(trip.stops, locale, snapshot)),
+    [locale, offRoute, snapshot, trip.stops],
+  )
 
   return (
     <div className="absolute inset-0">

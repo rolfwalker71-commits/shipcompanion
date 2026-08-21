@@ -42,6 +42,9 @@ export type Trip = {
   /** Stable id, usually the MMSI. Unique in the fleet. */
   id: string
   shipId: string
+  /** Optional overrides when the catalog MMSI/IMO is wrong or missing. */
+  mmsi?: string
+  imo?: string
   customShip?: { name: string; mmsi: string; imo?: string; line: string; lineDe: string }
   startDate: string
   endDate: string
@@ -102,6 +105,8 @@ export type SnapshotResponse = {
     actual: string | null
   } | null
   fromPort: string | null
+  /** Live GPS is far from every planned stop (e.g. other ocean than this itinerary). */
+  offItinerary: boolean
   distanceKm: number | null
   weather: WeatherInfo | null
   sun: { sunrise: string; sunset: string } | null
@@ -143,6 +148,7 @@ export type VesselsApiStatus = {
   lastHistoryAt: string | null
   nextHistoryAt: string | null
   lastError: string | null
+  lastHistoryError: string | null
   vesselCount: number
   pinConfigured: boolean
 }

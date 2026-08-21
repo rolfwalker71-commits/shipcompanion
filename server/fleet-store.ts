@@ -122,7 +122,10 @@ export function normalizeTrip(value: unknown): Trip | null {
   }
 
   const catalog = row.shipId === CUSTOM_SHIP_ID ? undefined : shipById(row.shipId)
-  const mmsi = customShip?.mmsi || catalog?.mmsi || ''
+  const mmsiOverride = typeof row.mmsi === 'string' ? row.mmsi.replace(/\D/g, '') : ''
+  const imoOverride = typeof row.imo === 'string' ? row.imo.replace(/\D/g, '') : ''
+  const mmsi = mmsiOverride || customShip?.mmsi || catalog?.mmsi || ''
+  const imo = imoOverride || customShip?.imo || catalog?.imo || ''
   const id =
     typeof row.id === 'string' && row.id.trim()
       ? row.id.trim()
@@ -131,6 +134,8 @@ export function normalizeTrip(value: unknown): Trip | null {
   return {
     id,
     shipId: row.shipId,
+    mmsi: mmsi || undefined,
+    imo: imo || undefined,
     customShip,
     startDate: row.startDate,
     endDate: row.endDate,

@@ -19,11 +19,14 @@ export type VoyageData = {
   name: string | null
 }
 
+type Stamped = GeoPoint & { ts: number }
+
 type Track = {
   fix: LiveFix | null
   aisFix: LiveFix | null
   voyage: VoyageData | null
   trail: GeoPoint[]
+  history: Stamped[]
   berthId: string | null
   parked: GeoPoint | null
   actualDepartures: Record<string, number>
@@ -44,6 +47,7 @@ type CachedTrack = {
   eta?: string | null
   shipName?: string | null
   trail?: GeoPoint[]
+  history?: Stamped[]
   aisTs?: number
 }
 
@@ -57,6 +61,8 @@ const LEFT_PIER_KM = 0.8
 const MOVING_KNOTS = 2.5
 const MIN_TRAIL_KM = 0.8
 const MAX_TRAIL = 600
+const MIN_HISTORY_MS = 45_000
+let saveChain: Promise<void> = Promise.resolve()
 export const AIS_LIVE_MS = 20 * 60 * 1000
 const AIS_SILENCE_MS = 12 * 60 * 1000
 const MESSAGE_TYPES = [
@@ -125,7 +131,7 @@ function parseAisTime(value: unknown): number {
 }
 
 function emptyTrack(): Track {
-  return { fix: null, aisFix: null, voyage: null, trail: [], berthId: null, parked: null, actualDepartures: {} }
+  return { fix: null, aisFix: null, voyage: null, trail: [], history: [], berthId: null, parked: null, actualDepartures: {} }
 }
 
 function ensureTrack(mmsi: string): Track {
@@ -159,7 +165,8 @@ async function loadCache(): Promise<void> {
               typeof point?.lat === 'number' && typeof point?.lng === 'number',
           )
         : []
-      tracks.set(mmsi, {
+      const history = readHistory(row.history)
+      adoptTrack(mmsi, {
         fix,
         aisFix: fix && typeof row.aisTs === 'number' ? { ...fix, ts: row.aisTs } : fix,
         voyage:
@@ -171,6 +178,7 @@ async function loadCache(): Promise<void> {
               }
             : null,
         trail: trail.length ? trail : fix ? [{ lat: fix.lat, lng: fix.lng }] : [],
+        history,
         berthId: row.berthId ?? null,
         parked: row.parked ?? (hasFix ? { lat: row.lat as number, lng: row.lng as number } : null),
         actualDepartures: row.actualDepartures ?? {},
@@ -194,10 +202,95 @@ async function saveCache(): Promise<void> {
       eta: track.voyage?.eta ?? null,
       shipName: track.voyage?.name ?? null,
       trail: track.trail,
+      history: track.history,
       aisTs: track.aisFix?.ts,
     }
   }
   await writeFile(CACHE_FILE, JSON.stringify(payload), 'utf8')
+}
+
+function queueSave(): void {
+  saveChain = saveChain.then(() => saveCache()).catch((error) => {
+    console.warn('AIS cache save failed:', error instanceof Error ? error.message : error)
+  })
+}
+
+function readHistory(value: unknown): Stamped[] {
+  if (!Array.isArray(value)) return []
+  const out: Stamped[] = []
+  for (const point of value) {
+    if (!point || typeof point !== 'object') continue
+    const row = point as { lat?: unknown; lng?: unknown; ts?: unknown }
+    if (typeof row.lat !== 'number' || typeof row.lng !== 'number' || typeof row.ts !== 'number') continue
+    if (!Number.isFinite(row.lat) || !Number.isFinite(row.lng) || !Number.isFinite(row.ts) || row.ts <= 0) continue
+    out.push({ lat: row.lat, lng: row.lng, ts: row.ts })
+  }
+  return out
+}
+
+function stampOf(point: GeoPoint): Stamped | null {
+  const ts = (point as GeoPoint & { ts?: number }).ts
+  if (typeof ts !== 'number' || !Number.isFinite(ts) || ts <= 0) return null
+  return { lat: point.lat, lng: point.lng, ts }
+}
+
+function thinStamped(points: Stamped[]): Stamped[] {
+  const sorted = [...points].sort((a, b) => a.ts - b.ts)
+  const merged: Stamped[] = []
+  for (const point of sorted) {
+    const last = merged[merged.length - 1]
+    if (!last) {
+      merged.push(point)
+      continue
+    }
+    if (point.ts - last.ts < MIN_HISTORY_MS && haversineKm(last, point) < MIN_TRAIL_KM) {
+      merged[merged.length - 1] = point
+      continue
+    }
+    merged.push(point)
+  }
+  return merged.length > MAX_TRAIL ? merged.slice(merged.length - MAX_TRAIL) : merged
+}
+
+function mergeStampTrails(history: Stamped[], trail: GeoPoint[]): GeoPoint[] {
+  const pool: Stamped[] = [...history]
+  for (const point of trail) {
+    const stamped = stampOf(point)
+    if (stamped) pool.push(stamped)
+  }
+  return thinStamped(pool)
+}
+
+function newerFix(a: LiveFix | null, b: LiveFix | null): LiveFix | null {
+  if (!a) return b
+  if (!b) return a
+  return a.ts >= b.ts ? a : b
+}
+
+function adoptTrack(mmsi: string, loaded: Track): void {
+  const current = tracks.get(mmsi)
+  if (!current) {
+    tracks.set(mmsi, loaded)
+    return
+  }
+  tracks.set(mmsi, {
+    fix: newerFix(current.fix, loaded.fix),
+    aisFix: newerFix(current.aisFix, loaded.aisFix),
+    voyage: current.voyage ?? loaded.voyage,
+    trail: current.trail.length >= loaded.trail.length ? current.trail : loaded.trail,
+    history: current.history.length >= loaded.history.length ? current.history : loaded.history,
+    berthId: current.berthId ?? loaded.berthId,
+    parked: current.parked ?? loaded.parked,
+    actualDepartures: { ...loaded.actualDepartures, ...current.actualDepartures },
+  })
+}
+
+export function aisCacheReady(): Promise<void> {
+  return (cacheReady ??= loadCache())
+}
+
+export function vesselsHistoryCount(mmsi: string): number {
+  return tracks.get(mmsi)?.history.length ?? 0
 }
 
 /** Record a position in the trail. AIS frames mark aisFix; Vessels API does not. */
@@ -249,7 +342,7 @@ function rememberPosition(mmsi: string, fix: LiveFix, markAis = true): void {
     parked: parkedPoint,
     actualDepartures: departures,
   })
-  void saveCache()
+  void queueSave()
 }
 
 export function rememberVoyage(mmsi: string, voyage: VoyageData): void {
@@ -262,7 +355,7 @@ export function rememberVoyage(mmsi: string, voyage: VoyageData): void {
       name: voyage.name ?? prev.voyage?.name ?? null,
     },
   })
-  void saveCache()
+  void queueSave()
 }
 
 function nearestStop(point: GeoPoint, stops: PortStop[]): PortStop | null {
@@ -290,41 +383,19 @@ function appendTrail(trail: GeoPoint[], fix: LiveFix, parked: boolean): GeoPoint
   return next.length > MAX_TRAIL ? next.slice(next.length - MAX_TRAIL) : next
 }
 
-/** Merge timestamped history into the stored trail (used by Vessels /track). */
+/** Merge timestamped Vessels history. Kept apart from the live AIS trail. */
 export function ingestHistory(mmsi: string, points: LiveFix[]): number {
   if (!mmsi || points.length === 0) return 0
   const prev = ensureTrack(mmsi)
-  type Stamped = GeoPoint & { ts: number }
-  const pool: Stamped[] = []
-  for (const point of prev.trail) {
-    const ts = typeof (point as GeoPoint & { ts?: number }).ts === 'number' ? (point as GeoPoint & { ts: number }).ts : 0
-    if (ts > 0) pool.push({ lat: point.lat, lng: point.lng, ts })
-  }
-  let added = 0
+  const incoming: Stamped[] = []
   for (const point of points) {
-    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.ts)) continue
-    pool.push({ lat: point.lat, lng: point.lng, ts: point.ts })
-    added += 1
+    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.ts) || point.ts <= 0) continue
+    incoming.push({ lat: point.lat, lng: point.lng, ts: point.ts })
   }
-  if (!added && pool.length === 0) return 0
-  pool.sort((a, b) => a.ts - b.ts)
-  const merged: Stamped[] = []
-  for (const point of pool) {
-    const last = merged[merged.length - 1]
-    if (!last) {
-      merged.push(point)
-      continue
-    }
-    if (point.ts - last.ts < 45_000 || haversineKm(last, point) < MIN_TRAIL_KM) {
-      merged[merged.length - 1] = point
-      continue
-    }
-    merged.push(point)
-  }
-  const trail = merged.length > MAX_TRAIL ? merged.slice(merged.length - MAX_TRAIL) : merged
-  tracks.set(mmsi, { ...prev, trail })
-  void saveCache()
-  return added
+  if (!incoming.length) return 0
+  tracks.set(mmsi, { ...prev, history: thinStamped([...prev.history, ...incoming]) })
+  void queueSave()
+  return incoming.length
 }
 
 function subscribe(): void {
@@ -529,7 +600,9 @@ export function voyageOf(mmsi: string): VoyageData | null {
 }
 
 export function aisTrail(mmsi: string): GeoPoint[] {
-  return tracks.get(mmsi)?.trail ?? []
+  const track = tracks.get(mmsi)
+  if (!track) return []
+  return mergeStampTrails(track.history, track.trail)
 }
 
 export function actualDeparture(mmsi: string, stopId: string): number | null {

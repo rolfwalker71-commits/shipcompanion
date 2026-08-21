@@ -1,5 +1,5 @@
 import type { AisNavState, SeenSource, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
-import { estimatedPosition, estimateUnderway, findLeg, forecastPath, haversineKm, nearPort, routePath } from '../shared/geo.ts'
+import { estimatedPosition, estimateUnderway, findLeg, forecastPath, haversineKm, isOffItinerary, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
 import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
 import {
@@ -65,14 +65,15 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const receivedLive = Boolean(received && receivedAge < received.liveMs)
   const manualLastKnown =
     Boolean(received?.source === 'manual') && !receivedLive && receivedAge < MANUAL_LIVE_MS
-  const guessed = estimatedPosition(body.stops, now, received)
+  const offItinerary = Boolean(received && isOffItinerary(received, body.stops))
+  const guessed = estimatedPosition(body.stops, now, offItinerary ? null : received)
   if (!guessed) return { error: 'no_route', status: 400 }
 
   const streamError = aisError()
   const dockedError = dataDockedError()
   const hasTracker = aisConfigured() || dataDockedConfigured() || vesselsConfigured()
   const estimate =
-    !receivedLive && !manualLastKnown && received && !guessed.atPort
+    !offItinerary && !receivedLive && !manualLastKnown && received && !guessed.atPort
       ? estimateUnderway(
           {
             lat: received.lat,
@@ -89,37 +90,42 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   const tracking = receivedLive
     ? 'live'
-    : estimate
-      ? 'estimated'
-      : received
-        ? 'last-known'
-        : !hasTracker
-          ? 'no-key'
-          : streamError && !dataDockedConfigured()
-            ? 'ais-error'
-            : dockedError && !aisConfigured()
-              ? 'ais-error'
-              : 'estimated'
-
-  const position = receivedLive && received
-    ? { lat: received.lat, lng: received.lng, source: 'live' as const }
-    : estimate
-      ? { lat: estimate.point.lat, lng: estimate.point.lng, source: 'approx' as const }
-      : guessed.atPort
-        ? { ...guessed.point, source: 'approx' as const }
+    : offItinerary && received
+      ? 'last-known'
+      : estimate
+        ? 'estimated'
         : received
-          ? { lat: received.lat, lng: received.lng, source: 'approx' as const }
-          : { ...guessed.point, source: 'approx' as const }
+          ? 'last-known'
+          : !hasTracker
+            ? 'no-key'
+            : streamError && !dataDockedConfigured()
+              ? 'ais-error'
+              : dockedError && !aisConfigured()
+                ? 'ais-error'
+                : 'estimated'
+
+  const position =
+    received && (receivedLive || offItinerary)
+      ? { lat: received.lat, lng: received.lng, source: receivedLive ? ('live' as const) : ('approx' as const) }
+      : estimate
+        ? { lat: estimate.point.lat, lng: estimate.point.lng, source: 'approx' as const }
+        : guessed.atPort
+          ? { ...guessed.point, source: 'approx' as const }
+          : received
+            ? { lat: received.lat, lng: received.lng, source: 'approx' as const }
+            : { ...guessed.point, source: 'approx' as const }
 
   const next = guessed.next
-  const navCandidate = estimate
-    ? 'underway'
-    : received
-      ? navStateFromAis(received.navStatus, received.sog)
-      : guessed.atPort
-        ? 'moored'
-        : 'unknown'
-  const berth = estimate ? null : pickBerth(body.stops, received, leg, guessed.atPort, navCandidate)
+  const navCandidate = offItinerary
+    ? navStateFromAis(received?.navStatus, received?.sog)
+    : estimate
+      ? 'underway'
+      : received
+        ? navStateFromAis(received.navStatus, received.sog)
+        : guessed.atPort
+          ? 'moored'
+          : 'unknown'
+  const berth = offItinerary || estimate ? null : pickBerth(body.stops, received, leg, guessed.atPort, navCandidate)
   const atPort = Boolean(berth)
   // If our itinerary says we're in port and berth detection succeeded, force "moored"
   // even when stale AIS navStatus still says underway.
@@ -138,31 +144,36 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const voyageEta = streamVoyage?.eta ?? vesselsFix?.eta ?? dockedFix?.eta ?? null
   const voyage =
     aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
-  const weather =
-    (await weatherPromise) ??
-    (await fetchWeather(position.lat, position.lng, now).catch(() => null))
+  const weather = offItinerary
+    ? await fetchWeather(position.lat, position.lng, now).catch(() => null)
+    : ((await weatherPromise) ??
+      (await fetchWeather(position.lat, position.lng, now).catch(() => null)))
 
-  const departStop = atPort ? shown : (leg.previous ?? null)
+  const departStop = offItinerary ? null : atPort ? shown : (leg.previous ?? null)
   const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
   const track = aisTrail(body.mmsi)
-  const gap = buildGap(track, received, position, estimate?.track ?? [])
-  const forecast = forecastPath(null, position, destination, atPort)
-  const narrative = await narrate({
-    shipName: body.shipName,
-    locale: body.locale,
-    lat: position.lat,
-    lng: position.lng,
-    currentPort: atPort ? loc(shown) : null,
-    nextPort: loc(destination),
-    arriveAt: destination.arriveAt,
-    departAt: atPort ? shown.departAt : null,
-    weather,
-    atPort,
-    nav,
-    zone: null,
-    aisDestination,
-    aisEta: voyageEta,
-  })
+  const gap = buildGap(track, received, position, offItinerary ? [] : (estimate?.track ?? []))
+  const forecast = offItinerary ? [] : forecastPath(null, position, destination, atPort)
+  const narrative = offItinerary
+    ? body.locale === 'de'
+      ? `${body.shipName} sendet Live-Position, die nicht zum hinterlegten Reiseplan passt.`
+      : `${body.shipName} is reporting a live position that does not match this itinerary.`
+    : await narrate({
+        shipName: body.shipName,
+        locale: body.locale,
+        lat: position.lat,
+        lng: position.lng,
+        currentPort: atPort ? loc(shown) : null,
+        nextPort: loc(destination),
+        arriveAt: destination.arriveAt,
+        departAt: atPort ? shown.departAt : null,
+        weather,
+        atPort,
+        nav,
+        zone: null,
+        aisDestination,
+        aisEta: voyageEta,
+      })
   const dockedStatus = dataDockedStatus()
 
   return {
@@ -193,12 +204,13 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
       : null),
     shipTz: weather?.timezone || tzFromLongitude(position.lng),
     narrative,
-    path: routePath(body.stops),
+    path: offItinerary ? [] : routePath(body.stops),
     track,
     gap,
     forecast,
-    fromPort: !atPort && leg.previous ? loc(leg.previous) : null,
-    distanceKm: !atPort ? Math.round(haversineKm(position, destination)) : null,
+    fromPort: offItinerary ? null : !atPort && leg.previous ? loc(leg.previous) : null,
+    offItinerary,
+    distanceKm: offItinerary || atPort ? null : Math.round(haversineKm(position, destination)),
     departure: departStop
       ? {
           portName: loc(departStop),

@@ -98,7 +98,9 @@ export function StatusStrip({
   const pocName = nextName
   const departure =
     snapshot.departure?.planned ? formatArrivalParts(snapshot.departure.planned, locale, snapshot.shipTz) : null
-  const arrival = formatArrivalParts(snapshot.nextPort.arriveAt, locale, snapshot.shipTz)
+  const arrival = snapshot.nextPort.arriveAt
+    ? formatArrivalParts(snapshot.nextPort.arriveAt, locale, snapshot.shipTz)
+    : null
   const routeAria = mooredAt
     ? showNextLeg
       ? `${mooredAt}. ${t('continuesTo', { name: nextName })}`
@@ -238,7 +240,7 @@ export function StatusStrip({
                   ) : null}
                   <RouteRow
                     icon={<MapPinned className="h-4 w-4 shrink-0 text-teal-600 sm:h-5 sm:w-5" aria-hidden />}
-                    name={pocName}
+                    name={pocName || t('destinationUnknown')}
                     schedule={arrival ? <ScheduleStamp label={t('arrival')} parts={arrival} /> : null}
                   />
                 </>

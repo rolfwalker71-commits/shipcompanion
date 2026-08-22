@@ -126,6 +126,74 @@ export function formatSeen(iso: string, locale: Locale, withUtc = false): string
   return stamp(local, date, withUtc)
 }
 
+/** Published harbor wall-clock (date + HH:mm) → UTC ISO. */
+export function harborLocalToIso(ymd: string, hm: string, timeZone: string): string {
+  const [year, month, day] = ymd.split('-').map(Number)
+  const [hour, minute] = hm.split(':').map(Number)
+  if (!year || !month || !day || !Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return new Date().toISOString()
+  }
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0)
+  const first = offsetMinutesAt(new Date(utcGuess), timeZone)
+  let utc = utcGuess - first * 60_000
+  const second = offsetMinutesAt(new Date(utc), timeZone)
+  if (second !== first) utc = utcGuess - second * 60_000
+  return new Date(utc).toISOString()
+}
+
+/** UTC ISO → published harbor date + HH:mm. */
+export function isoToHarborLocal(iso: string, timeZone: string): { date: string; time: string } {
+  const parts = zonedParts(new Date(iso), timeZone)
+  return {
+    date: `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`,
+    time: `${pad2(parts.hour)}:${pad2(parts.minute)}`,
+  }
+}
+
+function zonedParts(date: Date, timeZone: string): {
+  year: number
+  month: number
+  day: number
+  hour: number
+  minute: number
+  second: number
+} {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const num = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value ?? 0)
+  return {
+    year: num('year'),
+    month: num('month'),
+    day: num('day'),
+    hour: num('hour'),
+    minute: num('minute'),
+    second: num('second'),
+  }
+}
+
+function offsetMinutesAt(date: Date, timeZone: string): number {
+  try {
+    const local = zonedParts(date, timeZone)
+    const asUtc = Date.UTC(local.year, local.month - 1, local.day, local.hour, local.minute, local.second)
+    return (asUtc - date.getTime()) / 60_000
+  } catch {
+    return 0
+  }
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0')
+}
+
 /** Compact map-pin times in Europe/Berlin, without UTC. */
 export function formatMapWhen(iso: string, locale: Locale): string {
   const date = new Date(iso)

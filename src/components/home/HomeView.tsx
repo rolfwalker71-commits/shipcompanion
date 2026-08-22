@@ -21,18 +21,19 @@ export function HomeView({ trip }: HomeViewProps) {
     const guessed = estimatedPosition(trip.stops)
     if (guessed) return guessed.point
     const stop = trip.stops[0]
-    return stop ? { lat: stop.lat, lng: stop.lng } : { lat: 41.9, lng: 5.2 }
+    return stop ? { lat: stop.lat, lng: stop.lng } : { lat: 30, lng: -20 }
   }, [snapshot?.position, trip.stops])
 
   const offRoute = Boolean(snapshot?.offItinerary)
-  const path = offRoute ? [] : (snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng })))
+  const hasPlan = trip.stops.length > 0
+  const path = !hasPlan || offRoute ? [] : (snapshot?.path ?? trip.stops.map((stop) => ({ lat: stop.lat, lng: stop.lng })))
   const track = snapshot?.track ?? []
   const gap = snapshot?.gap ?? []
-  const forecast = offRoute ? [] : (snapshot?.forecast ?? [])
+  const forecast = snapshot?.forecast ?? []
 
   const ports = useMemo(
-    () => (offRoute ? [] : classifyPorts(trip.stops, locale, snapshot)),
-    [locale, offRoute, snapshot, trip.stops],
+    () => (hasPlan ? (offRoute ? [] : classifyPorts(trip.stops, locale, snapshot)) : radioPorts(snapshot, locale)),
+    [hasPlan, locale, offRoute, snapshot, trip.stops],
   )
 
   return (
@@ -72,6 +73,33 @@ export function HomeView({ trip }: HomeViewProps) {
       </div>
     </div>
   )
+}
+
+function radioPorts(snapshot: SnapshotResponse | null, locale: 'de' | 'en'): MapPort[] {
+  if (!snapshot) return []
+  const next = snapshot.nextPort
+  const ports: MapPort[] = []
+  if (next.atPort && next.berthName) {
+    ports.push({
+      id: 'here',
+      name: next.berthName,
+      lat: snapshot.position.lat,
+      lng: snapshot.position.lng,
+      when: '',
+      kind: 'current',
+    })
+  }
+  if (next.name && (!next.atPort || next.name !== next.berthName)) {
+    ports.push({
+      id: 'dest',
+      name: next.name,
+      lat: next.lat,
+      lng: next.lng,
+      when: next.arriveAt ? formatMapWhen(next.arriveAt, locale) : '',
+      kind: 'next',
+    })
+  }
+  return ports
 }
 
 function classifyPorts(

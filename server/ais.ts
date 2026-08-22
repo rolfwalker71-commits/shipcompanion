@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { GeoPoint, PortStop } from '../shared/types.ts'
 import { haversineKm } from '../shared/geo.ts'
+import { findHarbor, harborNear } from '../shared/harbors.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, parseAisEta } from '../shared/ais.ts'
 
 export type LiveFix = GeoPoint & {
@@ -28,6 +29,7 @@ type Track = {
   trail: GeoPoint[]
   history: Stamped[]
   berthId: string | null
+  lastPortId: string | null
   parked: GeoPoint | null
   actualDepartures: Record<string, number>
 }
@@ -41,6 +43,7 @@ type CachedTrack = {
   cog?: number | null
   heading?: number | null
   berthId?: string | null
+  lastPortId?: string | null
   parked?: GeoPoint | null
   actualDepartures?: Record<string, number>
   destination?: string | null
@@ -131,7 +134,17 @@ function parseAisTime(value: unknown): number {
 }
 
 function emptyTrack(): Track {
-  return { fix: null, aisFix: null, voyage: null, trail: [], history: [], berthId: null, parked: null, actualDepartures: {} }
+  return {
+    fix: null,
+    aisFix: null,
+    voyage: null,
+    trail: [],
+    history: [],
+    berthId: null,
+    lastPortId: null,
+    parked: null,
+    actualDepartures: {},
+  }
 }
 
 function ensureTrack(mmsi: string): Track {
@@ -180,6 +193,7 @@ async function loadCache(): Promise<void> {
         trail: trail.length ? trail : fix ? [{ lat: fix.lat, lng: fix.lng }] : [],
         history,
         berthId: row.berthId ?? null,
+        lastPortId: row.lastPortId ?? row.berthId ?? null,
         parked: row.parked ?? (hasFix ? { lat: row.lat as number, lng: row.lng as number } : null),
         actualDepartures: row.actualDepartures ?? {},
       })
@@ -196,6 +210,7 @@ async function saveCache(): Promise<void> {
     payload[mmsi] = {
       ...(track.fix ?? {}),
       berthId: track.berthId,
+      lastPortId: track.lastPortId,
       parked: track.parked,
       actualDepartures: track.actualDepartures,
       destination: track.voyage?.destination ?? null,
@@ -295,6 +310,7 @@ function adoptTrack(mmsi: string, loaded: Track): void {
     trail: current.trail.length >= loaded.trail.length ? current.trail : loaded.trail,
     history: current.history.length >= loaded.history.length ? current.history : loaded.history,
     berthId: current.berthId ?? loaded.berthId,
+    lastPortId: current.lastPortId ?? loaded.lastPortId,
     parked: current.parked ?? loaded.parked,
     actualDepartures: { ...loaded.actualDepartures, ...current.actualDepartures },
   })
@@ -342,18 +358,19 @@ function rememberPosition(mmsi: string, fix: LiveFix, markAis = true): void {
   let sog = fix.sog ?? inferredSog(prev.fix, fix)
   if (sog == null) sog = isStoppedNav(statusNav) ? 0 : (prev.fix?.sog ?? null)
   const merged: LiveFix = { ...fix, sog }
-  const stops = tripStops.get(mmsi) ?? []
-  const nearby = nearestStop(merged, stops)
+  const nearby = nearestKnownPort(merged, tripStops.get(mmsi) ?? [])
   const nav = navStateFromAis(merged.navStatus, merged.sog)
   const parked = isStoppedNav(nav) || (nav === 'unknown' && Boolean(nearby) && (merged.sog == null || merged.sog < 1.2))
   const sailing =
     isUnderwayNav(nav) || (merged.sog != null && merged.sog >= MOVING_KNOTS) || merged.navStatus === 0 || merged.navStatus === 8
   const departures = { ...prev.actualDepartures }
   let berthId = prev.berthId
+  let lastPortId = prev.lastPortId
   let parkedPoint = prev.parked
 
   if (parked && nearby) {
     berthId = nearby.id
+    lastPortId = nearby.id
     parkedPoint = { lat: merged.lat, lng: merged.lng }
   } else if (berthId && !departures[berthId]) {
     const from = parkedPoint ?? nearby ?? prev.fix
@@ -361,6 +378,7 @@ function rememberPosition(mmsi: string, fix: LiveFix, markAis = true): void {
     const leftHarbor = nearby == null && !parked
     if ((sailing && (moved >= LEFT_PIER_KM || nav === 'underway')) || leftHarbor) {
       departures[berthId] = merged.ts
+      lastPortId = berthId
       berthId = nearby?.id ?? null
       parkedPoint = null
     }
@@ -374,6 +392,7 @@ function rememberPosition(mmsi: string, fix: LiveFix, markAis = true): void {
     aisFix: markAis ? merged : prev.aisFix,
     trail: appendTrail(prev.trail, merged, parked),
     berthId,
+    lastPortId,
     parked: parkedPoint,
     actualDepartures: departures,
   })
@@ -393,13 +412,16 @@ export function rememberVoyage(mmsi: string, voyage: VoyageData): void {
   void queueSave()
 }
 
-function nearestStop(point: GeoPoint, stops: PortStop[]): PortStop | null {
-  let best: PortStop | null = null
-  let bestKm = PORT_KM
+function nearestKnownPort(point: GeoPoint, stops: PortStop[]): (GeoPoint & { id: string }) | null {
+  const fromCatalog = harborNear(point, PORT_KM)
+  let best: (GeoPoint & { id: string }) | null = fromCatalog
+    ? { id: fromCatalog.id, lat: fromCatalog.lat, lng: fromCatalog.lng }
+    : null
+  let bestKm = fromCatalog ? haversineKm(point, fromCatalog) : PORT_KM
   for (const stop of stops) {
     const km = haversineKm(point, stop)
     if (km <= bestKm) {
-      best = stop
+      best = { id: stop.id, lat: stop.lat, lng: stop.lng }
       bestKm = km
     }
   }
@@ -633,6 +655,15 @@ export function lastAisPosition(mmsi: string): LiveFix | null {
 
 export function voyageOf(mmsi: string): VoyageData | null {
   return tracks.get(mmsi)?.voyage ?? null
+}
+
+export function lastPortOf(mmsi: string): { id: string; name: string; nameDe: string } | null {
+  const id = tracks.get(mmsi)?.lastPortId
+  if (!id) return null
+  const harbor = findHarbor(id)
+  if (harbor) return { id: harbor.id, name: harbor.name, nameDe: harbor.nameDe }
+  const stop = (tripStops.get(mmsi) ?? []).find((item) => item.id === id)
+  return stop ? { id: stop.id, name: stop.name, nameDe: stop.nameDe } : null
 }
 
 export function aisTrail(mmsi: string): GeoPoint[] {

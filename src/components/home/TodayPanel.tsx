@@ -80,7 +80,16 @@ export function TodayPanel({ snapshot, locale, stops }: TodayPanelProps) {
             </span>
           ) : null}
         </div>
-        <JourneyBand stops={stops} locale={locale} snapshot={snapshot} dayLabel={progress} />
+        {stops.length ? (
+          <JourneyBand stops={stops} locale={locale} snapshot={snapshot} dayLabel={progress} />
+        ) : snapshot.nextPort.name ? (
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            {t('reportedDest', { name: snapshot.nextPort.name })}
+            {snapshot.nextPort.arriveAt
+              ? ` · ${t('aisEta', { time: formatClock(new Date(snapshot.nextPort.arriveAt), locale, shipTz) })}`
+              : ''}
+          </p>
+        ) : null}
       </div>
       <div className="flex shrink-0 flex-col items-end justify-center">
         <BoardPhoto />

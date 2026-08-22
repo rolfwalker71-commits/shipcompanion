@@ -1,5 +1,5 @@
 import type { AisNavState, Locale, PortStop } from './types.ts'
-import { allHarbors } from './harbors.ts'
+import { matchHarbor } from './harbors.ts'
 
 export type AisEtaParts = {
   month: number
@@ -63,29 +63,23 @@ export function resolveAisDestination(
 ): string | null {
   const cleaned = cleanAisDestination(raw)
   if (!cleaned) return null
-  const needle = normalize(cleaned)
-  const stop = stops.find((item) => destinationMatches(needle, item.name, item.nameDe))
-  if (stop) return locale === 'de' ? stop.nameDe : stop.name
-  const harbor = allHarbors().find((item) => destinationMatches(needle, item.name, item.nameDe, ...item.aliases))
+  const harbor = matchHarbor(cleaned)
   if (harbor) return locale === 'de' ? harbor.nameDe : harbor.name
-  return prettyAisDestination(cleaned)
-}
-
-function destinationMatches(needle: string, ...labels: string[]): boolean {
-  return labels.some((label) => {
-    const hay = normalize(label)
-    if (!hay) return false
-    if (hay.includes(needle) || needle.includes(hay)) return true
-    const parts = needle.split(' ').filter((part) => part.length >= 3)
-    return parts.some((part) => hay.split(' ').some((token) => token.includes(part) || part.includes(token)))
-  })
-}
-
-function normalize(value: string): string {
-  return value
+  const needle = cleaned
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
+  const stop = stops.find((item) => {
+    const hay = `${item.name} ${item.nameDe}`
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+    return hay.includes(needle) || needle.includes(hay)
+  })
+  if (stop) return locale === 'de' ? stop.nameDe : stop.name
+  return prettyAisDestination(cleaned)
 }

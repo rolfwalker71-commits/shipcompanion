@@ -92,7 +92,7 @@ export function normalizeTrip(value: unknown): Trip | null {
   if (typeof row.shipId !== 'string' || !row.shipId) return null
   if (typeof row.presetId !== 'string' || !row.presetId) return null
   if (typeof row.startDate !== 'string' || typeof row.endDate !== 'string') return null
-  if (!Array.isArray(row.stops) || row.stops.length === 0) return null
+  if (!Array.isArray(row.stops)) return null
   const stops = row.stops.filter(
     (stop) =>
       stop &&

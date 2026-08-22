@@ -1,7 +1,8 @@
 import type { AisNavState, SeenSource, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
 import { alignLegToFix, estimatedPosition, findLeg, forecastPath, haversineKm, isOffItinerary, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
-import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
+import { harborNear, matchHarbor } from '../shared/harbors.ts'
+import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, lastPortOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
 import {
   dataDockedConfigured,
   dataDockedError,
@@ -37,16 +38,18 @@ type ReceivedFix = {
 }
 
 export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResponse | { error: string; status: 400 }> {
-  if (!body?.mmsi || !body.shipName || !body.stops?.length) {
+  if (!body?.mmsi || !body.shipName) {
     return { error: 'invalid_request', status: 400 }
   }
+  const stops = Array.isArray(body.stops) ? body.stops : []
+  const hasPlan = stops.length > 0
 
-  watchMmsi(body.mmsi, body.stops)
+  watchMmsi(body.mmsi, stops)
   await refreshVesselsIfNeeded().catch(() => {})
   void refreshHistoryIfNeeded().catch(() => {})
   const now = new Date()
-  const clockLeg = findLeg(body.stops, now)
-  if (!clockLeg) return { error: 'no_route', status: 400 }
+  const clockLeg = hasPlan ? findLeg(stops, now) : null
+  if (hasPlan && !clockLeg) return { error: 'no_route', status: 400 }
 
   const streamFix = aisConfigured() ? await waitForLive(body.mmsi, 1_500) : lastKnownPosition(body.mmsi)
   const aisFix = lastAisPosition(body.mmsi) ?? streamFix ?? lastKnownPosition(body.mmsi)
@@ -63,17 +66,19 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const received = pickReceivedFix(aisFix, vesselsFix, dockedFix, manualFix)
   const receivedAge = received ? nowMs - received.ts : Number.POSITIVE_INFINITY
   const receivedLive = Boolean(received && receivedAge < received.liveMs)
-  const offItinerary = Boolean(received && isOffItinerary(received, body.stops))
-  const leg = received && !offItinerary ? (alignLegToFix(body.stops, now, received) ?? clockLeg) : clockLeg
-  const weatherStop = received ?? (leg.previous && !leg.atPort ? leg.previous : leg.next)
-  const weatherPromise = fetchWeather(weatherStop.lat, weatherStop.lng, now).catch(() => null)
-  const guessed = estimatedPosition(body.stops, now, offItinerary ? null : received, offItinerary ? clockLeg : leg)
-  if (!guessed) return { error: 'no_route', status: 400 }
+  const streamVoyage = voyageOf(body.mmsi)
+  const aisDestination = resolveAisDestination(
+    streamVoyage?.destination ?? vesselsFix?.destination ?? dockedFix?.destination ?? null,
+    stops,
+    body.locale,
+  )
+  const voyageEta = streamVoyage?.eta ?? vesselsFix?.eta ?? dockedFix?.eta ?? null
+  const voyage =
+    aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
 
   const streamError = aisError()
   const dockedError = dataDockedError()
   const hasTracker = aisConfigured() || dataDockedConfigured() || vesselsConfigured()
-
   const tracking = receivedLive
     ? 'live'
     : received
@@ -86,46 +91,37 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
             ? 'ais-error'
             : 'estimated'
 
+  const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
+  const track = aisTrail(body.mmsi)
+  const plan = hasPlan && clockLeg
+    ? plannedView({
+        stops,
+        clockLeg,
+        received,
+        now,
+        locale: body.locale,
+        loc,
+        mmsi: body.mmsi,
+      })
+    : null
+  const radio = !plan
+    ? radioView({
+        received,
+        locale: body.locale,
+        aisDestination,
+        voyageEta,
+        mmsi: body.mmsi,
+      })
+    : null
+  const view = plan ?? radio
+  if (!view) return { error: 'no_route', status: 400 }
+
   const position = received
     ? { lat: received.lat, lng: received.lng, source: receivedLive ? ('live' as const) : ('approx' as const) }
-    : { ...guessed.point, source: 'approx' as const }
+    : { ...view.position, source: 'approx' as const }
 
-  const next = guessed.next
-  const navCandidate = received
-    ? navStateFromAis(received.navStatus, received.sog)
-    : guessed.atPort
-      ? 'moored'
-      : 'unknown'
-  const berth = offItinerary ? null : pickBerth(body.stops, received, leg, leg.atPort, navCandidate)
-  const atPort = Boolean(berth)
-  // If our itinerary says we're in port and berth detection succeeded, force "moored"
-  // even when stale AIS navStatus still says underway.
-  const nav = atPort ? 'moored' : navCandidate
-  const shown = berth ?? next
-  const berthIndex = berth ? body.stops.findIndex((stop) => stop.id === berth.id) : -1
-  const following = berthIndex >= 0 ? (body.stops[berthIndex + 1] ?? null) : next
-  const destination = following ?? shown
-  const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
-  const streamVoyage = voyageOf(body.mmsi)
-  const aisDestination = resolveAisDestination(
-    streamVoyage?.destination ?? vesselsFix?.destination ?? dockedFix?.destination ?? null,
-    body.stops,
-    body.locale,
-  )
-  const voyageEta = streamVoyage?.eta ?? vesselsFix?.eta ?? dockedFix?.eta ?? null
-  const voyage =
-    aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
-  const weather = offItinerary
-    ? await fetchWeather(position.lat, position.lng, now).catch(() => null)
-    : ((await weatherPromise) ??
-      (await fetchWeather(position.lat, position.lng, now).catch(() => null)))
-
-  const departStop = offItinerary ? null : atPort ? shown : (leg.previous ?? null)
-  const actualTs = departStop ? actualDeparture(body.mmsi, departStop.id) : null
-  const track = aisTrail(body.mmsi)
-  const gap = buildGap(track, received, position, [])
-  const forecast = offItinerary ? [] : forecastPath(null, position, destination, atPort)
-  const narrative = offItinerary
+  const weather = await fetchWeather(position.lat, position.lng, now).catch(() => null)
+  const narrative = view.offItinerary
     ? body.locale === 'de'
       ? `${body.shipName} sendet Live-Position, die nicht zum hinterlegten Reiseplan passt.`
       : `${body.shipName} is reporting a live position that does not match this itinerary.`
@@ -134,13 +130,13 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
         locale: body.locale,
         lat: position.lat,
         lng: position.lng,
-        currentPort: atPort ? loc(shown) : null,
-        nextPort: loc(destination),
-        arriveAt: destination.arriveAt,
-        departAt: atPort ? shown.departAt : null,
+        currentPort: view.atPort ? view.hereName : null,
+        nextPort: view.nextName,
+        arriveAt: view.arriveAt,
+        departAt: view.departAt,
         weather,
-        atPort,
-        nav,
+        atPort: view.atPort,
+        nav: view.nav,
         zone: null,
         aisDestination,
         aisEta: voyageEta,
@@ -154,20 +150,20 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     seenSource: received?.source ?? null,
     seenAccuracyM: received?.source === 'manual' ? (manualFix?.accuracyM ?? null) : null,
     motion: {
-      nav,
+      nav: view.nav,
       sogKn: received?.sog ?? null,
       cog: received?.cog ?? null,
       heading: received?.heading ?? received?.cog ?? null,
     },
     voyage,
     nextPort: {
-      name: loc(destination),
-      arriveAt: destination.arriveAt,
-      lat: destination.lat,
-      lng: destination.lng,
-      atPort,
-      berthName: atPort ? loc(shown) : null,
-      departAt: atPort ? shown.departAt : null,
+      name: view.nextName,
+      arriveAt: view.arriveAt,
+      lat: view.nextLat,
+      lng: view.nextLng,
+      atPort: view.atPort,
+      berthName: view.atPort ? view.hereName : null,
+      departAt: view.departAt,
     },
     weather,
     sun: sunTimes(position.lat, position.lng, now) ?? (weather?.sunrise && weather?.sunset
@@ -175,22 +171,15 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
       : null),
     shipTz: weather?.timezone || tzFromLongitude(position.lng),
     narrative,
-    path: offItinerary ? [] : routePath(body.stops),
+    path: view.path,
     track,
-    gap,
-    forecast,
-    fromPort: offItinerary ? null : !atPort && leg.previous ? loc(leg.previous) : null,
-    offItinerary,
-    scheduledPort:
-      received && !offItinerary && loc(clockLeg.next) !== loc(destination) ? loc(clockLeg.next) : null,
-    distanceKm: offItinerary || atPort ? null : Math.round(haversineKm(position, destination)),
-    departure: departStop
-      ? {
-          portName: loc(departStop),
-          planned: departStop.departAt,
-          actual: actualTs ? new Date(actualTs).toISOString() : null,
-        }
-      : null,
+    gap: buildGap(track, received, position, []),
+    forecast: view.forecast,
+    fromPort: view.fromPort,
+    offItinerary: view.offItinerary,
+    scheduledPort: view.scheduledPort,
+    distanceKm: view.distanceKm,
+    departure: view.departure,
     dataDocked: dockedStatus.configured
       ? {
           remaining: dockedStatus.credits ?? dockedStatus.remaining,
@@ -201,6 +190,142 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
         }
       : null,
     vesselsApi: vesselsConfigured() ? vesselsApiStatus() : null,
+  }
+}
+
+type RouteView = {
+  position: { lat: number; lng: number }
+  nav: AisNavState
+  nextName: string
+  nextLat: number
+  nextLng: number
+  arriveAt: string | null
+  hereName: string | null
+  atPort: boolean
+  departAt: string | null
+  fromPort: string | null
+  path: { lat: number; lng: number }[]
+  forecast: { lat: number; lng: number }[]
+  offItinerary: boolean
+  scheduledPort: string | null
+  distanceKm: number | null
+  departure: { portName: string; planned: string; actual: string | null } | null
+}
+
+function plannedView(input: {
+  stops: SnapshotRequest['stops']
+  clockLeg: NonNullable<ReturnType<typeof findLeg>>
+  received: ReceivedFix | null
+  now: Date
+  locale: SnapshotRequest['locale']
+  loc: (stop: { name: string; nameDe: string }) => string
+  mmsi: string
+}): RouteView | null {
+  const offItinerary = Boolean(input.received && isOffItinerary(input.received, input.stops))
+  const leg =
+    input.received && !offItinerary
+      ? (alignLegToFix(input.stops, input.now, input.received) ?? input.clockLeg)
+      : input.clockLeg
+  const guessed = estimatedPosition(
+    input.stops,
+    input.now,
+    offItinerary ? null : input.received,
+    offItinerary ? input.clockLeg : leg,
+  )
+  if (!guessed) return null
+  const navCandidate = input.received
+    ? navStateFromAis(input.received.navStatus, input.received.sog)
+    : guessed.atPort
+      ? 'moored'
+      : 'unknown'
+  const berth = offItinerary ? null : pickBerth(input.stops, input.received, leg, leg.atPort, navCandidate)
+  const atPort = Boolean(berth)
+  const nav = atPort ? 'moored' : navCandidate
+  const next = guessed.next
+  const shown = berth ?? next
+  const berthIndex = berth ? input.stops.findIndex((stop) => stop.id === berth.id) : -1
+  const following = berthIndex >= 0 ? (input.stops[berthIndex + 1] ?? null) : next
+  const destination = following ?? shown
+  const departStop = offItinerary ? null : atPort ? shown : (leg.previous ?? null)
+  const actualTs = departStop ? actualDeparture(input.mmsi, departStop.id) : null
+  const position = input.received ?? guessed.point
+  return {
+    position,
+    nav,
+    nextName: input.loc(destination),
+    nextLat: destination.lat,
+    nextLng: destination.lng,
+    arriveAt: destination.arriveAt,
+    hereName: atPort ? input.loc(shown) : null,
+    atPort,
+    departAt: atPort ? shown.departAt : null,
+    fromPort: offItinerary ? null : !atPort && leg.previous ? input.loc(leg.previous) : null,
+    path: offItinerary ? [] : routePath(input.stops),
+    forecast: offItinerary ? [] : forecastPath(null, position, destination, atPort),
+    offItinerary,
+    scheduledPort:
+      input.received && !offItinerary && input.loc(input.clockLeg.next) !== input.loc(destination)
+        ? input.loc(input.clockLeg.next)
+        : null,
+    distanceKm: offItinerary || atPort ? null : Math.round(haversineKm(position, destination)),
+    departure: departStop
+      ? {
+          portName: input.loc(departStop),
+          planned: departStop.departAt,
+          actual: actualTs ? new Date(actualTs).toISOString() : null,
+        }
+      : null,
+  }
+}
+
+function radioView(input: {
+  received: ReceivedFix | null
+  locale: SnapshotRequest['locale']
+  aisDestination: string | null
+  voyageEta: string | null
+  mmsi: string
+}): RouteView | null {
+  const destHarbor = matchHarbor(input.aisDestination)
+  const here = input.received ? harborNear(input.received, 8) : null
+  const nav = input.received ? navStateFromAis(input.received.navStatus, input.received.sog) : 'unknown'
+  const parked =
+    Boolean(here) &&
+    (isStoppedNav(nav) || (nav === 'unknown' && (input.received?.sog == null || input.received.sog < 1.2)))
+  const locHarbor = (harbor: { name: string; nameDe: string }) =>
+    input.locale === 'de' ? harbor.nameDe : harbor.name
+  const hereName = here ? locHarbor(here) : null
+  const destName = input.aisDestination
+  const destIsHere = Boolean(here && destHarbor && here.id === destHarbor.id)
+  const nextName = destName && !destIsHere ? destName : destName ?? hereName ?? ''
+  const nextPoint = destHarbor ?? here ?? input.received
+  if (!input.received && !destHarbor && !destName) return null
+  const position = input.received ?? destHarbor ?? { lat: 30, lng: -30 }
+  const last = lastPortOf(input.mmsi)
+  const lastName = last ? (input.locale === 'de' ? last.nameDe : last.name) : null
+  const fromPort = !parked && lastName && lastName !== nextName ? lastName : null
+  return {
+    position,
+    nav: parked ? 'moored' : nav,
+    nextName,
+    nextLat: nextPoint?.lat ?? position.lat,
+    nextLng: nextPoint?.lng ?? position.lng,
+    arriveAt: input.voyageEta,
+    hereName: parked ? hereName : null,
+    atPort: parked,
+    departAt: null,
+    fromPort,
+    path: [],
+    forecast:
+      destHarbor && input.received && !parked && !destIsHere
+        ? forecastPath(null, input.received, destHarbor, false)
+        : [],
+    offItinerary: false,
+    scheduledPort: null,
+    distanceKm:
+      destHarbor && input.received && !parked && !destIsHere
+        ? Math.round(haversineKm(input.received, destHarbor))
+        : null,
+    departure: null,
   }
 }
 

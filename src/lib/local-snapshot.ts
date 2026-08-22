@@ -5,6 +5,7 @@ import { sunTimes, tzFromLongitude } from '@shared/sun.ts'
 import { formatWhen } from '@shared/time.ts'
 
 export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse | null {
+  if (!trip.stops.length) return null
   const guessed = estimatedPosition(trip.stops)
   const leg = findLeg(trip.stops)
   const ship = tripShip(trip)

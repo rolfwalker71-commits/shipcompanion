@@ -92,7 +92,7 @@ export type SnapshotResponse = {
   } | null
   nextPort: {
     name: string
-    arriveAt: string
+    arriveAt: string | null
     lat: number
     lng: number
     atPort: boolean

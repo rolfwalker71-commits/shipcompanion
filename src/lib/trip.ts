@@ -90,7 +90,7 @@ export async function fetchRemoteTrip(): Promise<Trip | null> {
   if (!res.ok) return null
   const data = (await res.json()) as { trip?: Trip | null }
   const trip = data.trip
-  if (!trip?.shipId || !trip.stops?.length) return null
+  if (!trip?.shipId) return null
   return migrateTrip(trip)
 }
 
@@ -134,7 +134,7 @@ export async function removeRemoteTrip(id: string): Promise<Trip[]> {
 function migrateTrip(trip: Trip): Trip {
   const preset = presetById(trip.presetId)
   const withId: Trip = { ...trip, id: trip.id || tripKey(trip) }
-  if (!preset) return withId
+  if (!preset || !preset.stops.length) return withId
 
   if (trip.presetId === 'west-med' && !trip.stops.some((stop) => stop.id === 'la-spezia')) {
     return {

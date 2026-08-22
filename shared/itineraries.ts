@@ -45,6 +45,13 @@ function caribbeanStops(): PortStop[] {
 export function itineraryPresets(): ItineraryPreset[] {
   return [
     {
+      id: 'ais',
+      title: 'No plan (AIS destination)',
+      titleDe: 'Kein Plan (Funkziel)',
+      shipId: '',
+      stops: [],
+    },
+    {
       id: 'west-med',
       title: 'Western Mediterranean (Legend, 16–23 Aug)',
       titleDe: 'Westliches Mittelmeer (Legend, 16.–23. Aug.)',
@@ -73,6 +80,8 @@ export function presetById(id: string): ItineraryPreset | undefined {
 }
 
 export function stopsForTrip(presetId: string, startDate: string): PortStop[] {
-  const preset = presetById(presetId) ?? itineraryPresets()[0]
+  if (presetId === 'ais' || presetId === 'custom') return []
+  const preset = presetById(presetId)
+  if (!preset?.stops.length) return []
   return shiftStopsToStart(preset.stops, startDate)
 }

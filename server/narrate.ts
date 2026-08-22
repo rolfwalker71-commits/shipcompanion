@@ -7,8 +7,8 @@ type NarrateInput = {
   lat: number
   lng: number
   currentPort: string | null
-  nextPort: string
-  arriveAt: string
+  nextPort: string | null
+  arriveAt: string | null
   departAt: string | null
   weather: WeatherInfo | null
   atPort: boolean
@@ -23,7 +23,7 @@ function formatWhen(iso: string, locale: Locale): string {
 }
 
 export function templateNarrative(input: NarrateInput): string {
-  const arrival = formatWhen(input.arriveAt, input.locale)
+  const arrival = input.arriveAt ? formatWhen(input.arriveAt, input.locale) : null
   const departure = input.departAt ? formatWhen(input.departAt, input.locale) : null
   const sky = input.weather
     ? input.locale === 'de'
@@ -33,7 +33,7 @@ export function templateNarrative(input: NarrateInput): string {
   const temp = input.weather ? `${input.weather.tempC}°C` : null
   const stillInPort =
     input.atPort && input.departAt ? Date.now() > new Date(input.departAt).getTime() : false
-  const goingOn = input.currentPort && input.currentPort !== input.nextPort
+  const goingOn = Boolean(input.currentPort && input.nextPort && input.currentPort !== input.nextPort)
 
   if (input.locale === 'de') {
     const weatherBit = sky && temp ? ` bei ${temp} und ${sky}` : ''
@@ -46,13 +46,21 @@ export function templateNarrative(input: NarrateInput): string {
             ? `${input.shipName} liegt noch festgemacht in ${input.currentPort}.`
             : `${input.shipName} liegt festgemacht in ${input.currentPort}.`
       if (!goingOn) return `${berth}${weatherBit ? ` Draußen ${weatherBit.trim()}.` : ''}`
-      const leave = stillInPort
-        ? `Ablegen war für ${departure} geplant.`
-        : `Ablegen ${departure}.`
-      return `${berth} ${leave} Als Nächstes ${input.nextPort}, Ankunft ${arrival}${weatherBit}.`
+      const leave = departure
+        ? stillInPort
+          ? `Ablegen war für ${departure} geplant.`
+          : `Ablegen ${departure}.`
+        : ''
+      const nextBit = arrival
+        ? `Als Nächstes ${input.nextPort}, Ankunft ${arrival}`
+        : `Als Nächstes ${input.nextPort}`
+      return `${berth} ${leave} ${nextBit}${weatherBit}.`.replace(/\s+/g, ' ').trim()
     }
-    const etaBit = input.aisEta ? ` Das Schiff meldet Ankunft ${formatWhen(input.aisEta, input.locale)}.` : ''
-    return `${input.shipName} ist unterwegs nach ${input.nextPort}${where}. Ankunft ${arrival}${weatherBit}.${etaBit}`
+    if (!input.nextPort) {
+      return `${input.shipName} ist unterwegs${where}.${weatherBit ? ` Draußen ${weatherBit.trim()}.` : ''}`
+    }
+    const etaBit = arrival ? ` Ankunft ${arrival}.` : input.aisEta ? ` Das Schiff meldet Ankunft ${formatWhen(input.aisEta, input.locale)}.` : ''
+    return `${input.shipName} ist unterwegs nach ${input.nextPort}${where}.${etaBit}${weatherBit ? weatherBit + '.' : ''}`
   }
 
   const weatherBit = sky && temp ? ` in ${temp} and ${sky}` : ''
@@ -65,13 +73,21 @@ export function templateNarrative(input: NarrateInput): string {
           ? `${input.shipName} is still moored in ${input.currentPort}.`
           : `${input.shipName} is moored in ${input.currentPort}.`
     if (!goingOn) return `${berth}${weatherBit ? ` It is${weatherBit}.` : ''}`
-    const leave = stillInPort
-      ? `Departure was scheduled for ${departure}.`
-      : `Departure ${departure}.`
-    return `${berth} ${leave} Next is ${input.nextPort}, arrival ${arrival}${weatherBit}.`
+    const leave = departure
+      ? stillInPort
+        ? `Departure was scheduled for ${departure}.`
+        : `Departure ${departure}.`
+      : ''
+    const nextBit = arrival
+      ? `Next is ${input.nextPort}, arrival ${arrival}`
+      : `Next is ${input.nextPort}`
+    return `${berth} ${leave} ${nextBit}${weatherBit}.`.replace(/\s+/g, ' ').trim()
   }
-  const etaBit = input.aisEta ? ` The ship reports arrival ${formatWhen(input.aisEta, input.locale)}.` : ''
-  return `${input.shipName} is on the way to ${input.nextPort}${where}. Arrival ${arrival}${weatherBit}.${etaBit}`
+  if (!input.nextPort) {
+    return `${input.shipName} is under way${where}.${weatherBit ? ` It is${weatherBit}.` : ''}`
+  }
+  const etaBit = arrival ? ` Arrival ${arrival}.` : input.aisEta ? ` The ship reports arrival ${formatWhen(input.aisEta, input.locale)}.` : ''
+  return `${input.shipName} is on the way to ${input.nextPort}${where}.${etaBit}${weatherBit ? weatherBit + '.' : ''}`
 }
 
 export async function llmNarrative(input: NarrateInput): Promise<string | null> {
@@ -112,10 +128,10 @@ Already in port now: ${input.atPort ? `yes, currently ${input.nav} in ${input.cu
 ${stillInPort ? 'The scheduled departure time has already passed, but the ship is still at the berth.' : ''}
 AIS navigational status: ${input.nav} (moored = tied up, anchored = at anchor, underway = moving)
 Scheduled departure from current port: ${input.atPort ? departure : 'not in port'}
-Next destination: ${input.nextPort}
-Arrival at next destination: ${formatWhen(input.arriveAt, input.locale)}
+Next destination: ${input.nextPort ?? 'unknown'}
+Arrival at next destination: ${input.arriveAt ? formatWhen(input.arriveAt, input.locale) : 'unknown'}
 Reported sea/zone (use only if it is a real place name): ${input.zone ?? 'unknown'}
-AIS destination field (ignore if it conflicts with the itinerary): ${input.aisDestination ?? 'unknown'}
+AIS destination field: ${input.aisDestination ?? 'unknown'}
 AIS reported ETA (use only if at sea and it looks plausible): ${input.aisEta ? formatWhen(input.aisEta, input.locale) : 'unknown'}
 Approx position: ${input.lat.toFixed(2)}, ${input.lng.toFixed(2)} (only to name a well-known sea if obvious and at sea)
 Weather: ${weather}`,

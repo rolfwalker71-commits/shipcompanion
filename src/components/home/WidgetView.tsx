@@ -25,7 +25,7 @@ export function WidgetView({ trip }: WidgetViewProps) {
     ? snapshot?.nextPort.berthName ?? snapshot?.departure?.portName ?? nextName
     : null
   const showNextLeg = Boolean(!offItinerary && mooredAt && nextName && nextName !== mooredAt)
-  const headline = offItinerary ? t('offItinerary') : (mooredAt ?? nextName)
+  const headline = offItinerary ? t('offItinerary') : (mooredAt ?? nextName ?? t('destinationUnknown'))
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-muted px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[calc(3.5rem+env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -101,7 +101,9 @@ export function WidgetView({ trip }: WidgetViewProps) {
               {nextName && !showNextLeg ? (
                 <Badge className="gap-1.5 px-2.5 py-1 text-sm">
                   <ArrowRight className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                  {`${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, !compact)}`}
+                  {snapshot.nextPort.arriveAt
+                    ? `${t('arrival')} ${formatWhen(snapshot.nextPort.arriveAt, locale, !compact)}`
+                    : nextName}
                 </Badge>
               ) : null}
             </div>

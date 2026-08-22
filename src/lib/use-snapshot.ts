@@ -84,9 +84,14 @@ export function useSnapshot(trip: Trip) {
     const timer = window.setInterval(() => {
       void load()
     }, atPort ? 10_000 : 30_000)
+    const onRefresh = () => {
+      void load()
+    }
+    window.addEventListener('shiptracker:refresh', onRefresh)
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      window.removeEventListener('shiptracker:refresh', onRefresh)
     }
   }, [atPort, locale, logout, ship, trip.stops])
 

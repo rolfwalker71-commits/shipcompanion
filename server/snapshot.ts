@@ -217,9 +217,7 @@ function pickReceivedFix(
   if (docked) candidates.push(toReceived(docked, 'datadocked', AIS_LIVE_MS))
   if (manual) candidates.push(toReceived(manual, 'manual', MANUAL_LIVE_MS))
   if (!candidates.length) return null
-  const live = candidates.filter((row) => now - row.ts < row.liveMs)
-  const pool = live.length ? live : candidates
-  return pool.reduce((newest, row) => (row.ts > newest.ts ? row : newest))
+  return candidates.reduce((newest, row) => (row.ts > newest.ts ? row : newest))
 }
 
 function toReceived(

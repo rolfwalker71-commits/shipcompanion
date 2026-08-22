@@ -207,6 +207,7 @@ export function SettingsDialog({
           return
         }
         setVesselsFetchMsg('ok')
+        window.dispatchEvent(new Event('shiptracker:refresh'))
       })
       .catch(() => setVesselsFetchMsg('bad'))
       .finally(() => setVesselsFetchBusy(false))

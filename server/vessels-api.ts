@@ -218,16 +218,25 @@ function markFail(error: string, historyOnly = false): void {
   else store.lastError = error
 }
 
-export async function refreshVesselsIfNeeded(force = false): Promise<void> {
+export async function refreshVesselsIfNeeded(force = false, ignoreBackoff = false): Promise<void> {
   if (!apiKey()) return
   const ships = listFleet()
     .map((trip) => tripShip(trip))
     .filter((ship): ship is NonNullable<typeof ship> => Boolean(ship?.mmsi))
   if (!ships.length) return
-  if (rateLimited()) return
+  if (rateLimited() && !ignoreBackoff) return
   if (!force) {
     const next = nextFetchTs()
-    if (next && Date.now() < next) return
+    const staleFix = ships.some((ship) => {
+      const fix = store.fixes[ship.mmsi]
+      return !fix || Date.now() - fix.ts > vesselsLiveMs()
+    })
+    const fetchedRecently = Boolean(store.lastFetchAt && Date.now() - store.lastFetchAt < 5 * MINUTE_MS)
+    if (staleFix && !fetchedRecently) {
+      /* retry when stored GPS is older than the live window */
+    } else if (next && Date.now() < next) {
+      return
+    }
   }
   if (inflight) {
     await inflight
@@ -242,8 +251,7 @@ export async function refreshVesselsIfNeeded(force = false): Promise<void> {
 export async function forceRefreshVessels(): Promise<{ ok: boolean; error?: string }> {
   if (!apiKey()) return { ok: false, error: 'not_configured' }
   if (!listFleet().length) return { ok: false, error: 'no_ships' }
-  if (rateLimited()) return { ok: false, error: 'rate_limited' }
-  await refreshVesselsIfNeeded(true)
+  await refreshVesselsIfNeeded(true, true)
   void refreshHistoryIfNeeded().catch(() => {})
   if (isRateLimitText(store.lastError)) return { ok: false, error: 'rate_limited' }
   if (store.lastError) return { ok: false, error: store.lastError }
@@ -287,12 +295,19 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
       persist()
       return
     }
-    const rows = Array.isArray(json.data?.vessels) ? json.data.vessels : []
+    const payload = json.data
+    const rows = Array.isArray(payload)
+      ? payload
+      : isRecord(payload) && Array.isArray(payload.vessels)
+        ? payload.vessels
+        : []
     let applied = 0
     for (const raw of rows) {
       const parsed = parseVessel(raw)
       if (!parsed) continue
       const mmsi = matchFleetMmsi(parsed, ships)
+      const previous = store.fixes[mmsi]
+      if (previous && parsed.fix.ts + 5_000 < previous.ts) continue
       store.fixes[mmsi] = parsed.fix
       ingestFix(mmsi, parsed.fix, 'external')
       if (parsed.fix.destination || parsed.fix.eta || parsed.fix.name) {
@@ -333,34 +348,48 @@ function matchFleetMmsi(
 function parseVessel(raw: unknown): { mmsi: string; imo: string; fix: VesselsFix } | null {
   if (!raw || typeof raw !== 'object') return null
   const row = raw as Record<string, unknown>
-  const mmsi = digits(row.mmsi)
+  const vessel = isRecord(row.vessel) ? row.vessel : row
+  const mmsi = digits(row.mmsi ?? vessel.mmsi)
   if (!mmsi) return null
-  const imo = digits(row.imo)
-  const position = isRecord(row.position) ? row.position : row
+  const imo = digits(row.imo ?? vessel.imo)
+  const position = isRecord(row.position)
+    ? row.position
+    : isRecord(row.current_position)
+      ? row.current_position
+      : isRecord(vessel.position)
+        ? vessel.position
+        : row
   const lat = readCoord(position.latitude ?? position.lat)
   const lng = readCoord(position.longitude ?? position.lng ?? position.lon)
   if (lat == null || lng == null) return null
-  const route = isRecord(row.route) ? row.route : null
+  const route = isRecord(row.route) ? row.route : isRecord(vessel.route) ? vessel.route : null
   const dest =
     readText(route?.destination_port) ??
     readText(position.destination) ??
     null
   const etaRaw = route?.eta ?? position.eta
   const etaTs = parseUtc(etaRaw)
+  const ts =
+    parseUtc(position.timestamp_utc) ??
+    parseUtc(position.timestampUtc) ??
+    parseUtc(position.timestamp) ??
+    parseUtc(position.position_received) ??
+    ageMinutesToTs(position.age_minutes)
+  if (ts == null) return null
   return {
     mmsi,
     imo,
     fix: {
       lat,
       lng,
-      ts: parseUtc(position.timestamp_utc) ?? parseUtc(position.timestamp) ?? Date.now(),
+      ts,
       sog: readSog(position.speed_knots ?? position.speed),
       cog: readCourse(position.course_degrees ?? position.course),
       heading: readCourse(position.heading_degrees ?? position.heading),
       navStatus: navStatus(position.navigational_status),
       destination: dest,
       eta: etaTs ? new Date(etaTs).toISOString() : null,
-      name: readText(row.name),
+      name: readText(row.name ?? vessel.name),
     },
   }
 }
@@ -396,11 +425,20 @@ function readCourse(value: unknown): number | null {
 
 function parseUtc(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return value < 1e12 ? value * 1000 : value
+    const ms = value < 1e12 ? value * 1000 : value
+    return ms >= 1_577_836_800_000 && ms < Date.now() + 3_600_000 ? ms : null
   }
   if (typeof value !== 'string' || !value.trim()) return null
   const stamp = Date.parse(value)
-  return Number.isFinite(stamp) ? stamp : null
+  return Number.isFinite(stamp) && stamp >= 1_577_836_800_000 && stamp < Date.now() + 3_600_000
+    ? stamp
+    : null
+}
+
+function ageMinutesToTs(value: unknown): number | null {
+  const n = readCoord(value)
+  if (n == null || n < 0 || n > 7 * 24 * 60) return null
+  return Date.now() - n * 60_000
 }
 
 function navStatus(value: unknown): number | null {

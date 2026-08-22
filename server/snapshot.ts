@@ -60,7 +60,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     ? lastDataDockedFix(body.mmsi)
     : ((await refreshDataDockedIfNeeded(body.mmsi, aisLive || vesselsFresh).catch(() => lastDataDockedFix(body.mmsi))) ??
       lastDataDockedFix(body.mmsi))
-  const received = pickReceivedFix(aisFix, vesselsFix, dockedFix, manualFix, nowMs)
+  const received = pickReceivedFix(aisFix, vesselsFix, dockedFix, manualFix)
   const receivedAge = received ? nowMs - received.ts : Number.POSITIVE_INFINITY
   const receivedLive = Boolean(received && receivedAge < received.liveMs)
   const offItinerary = Boolean(received && isOffItinerary(received, body.stops))
@@ -209,7 +209,6 @@ function pickReceivedFix(
   vessels: LiveFix | null,
   docked: DockedFix | null,
   manual: ManualFix | null,
-  now: number,
 ): ReceivedFix | null {
   const candidates: ReceivedFix[] = []
   if (ais) candidates.push(toReceived(ais, 'ais', AIS_LIVE_MS))

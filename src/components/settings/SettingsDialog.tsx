@@ -137,9 +137,9 @@ export function SettingsDialog({
 
   function vesselsLine(): string {
     if (!vesselsApi?.configured) return t('trackingVesselsOff')
-    const limitedUntil = vesselsApi.rateLimitedUntil ? Date.parse(vesselsApi.rateLimitedUntil) : 0
-    if (limitedUntil > Date.now()) {
-      return t('trackingVesselsRate', { when: formatWhen(vesselsApi.rateLimitedUntil, locale) })
+    const untilIso = vesselsApi.rateLimitedUntil
+    if (untilIso && Date.parse(untilIso) > Date.now()) {
+      return t('trackingVesselsRate', { when: formatWhen(untilIso, locale) })
     }
     if (vesselsApi.lastError) {
       return t('trackingVesselsError', { error: vesselsApi.lastError })

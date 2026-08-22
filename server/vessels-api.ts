@@ -18,6 +18,8 @@ type Store = {
   lastFetchAt: number | null
   lastAttemptAt: number | null
   lastError: string | null
+  lastFailAt: number | null
+  lastFailWasRate: boolean
   intervalMinutes: number | null
   fixes: Record<string, VesselsFix>
   historyAt: Record<string, number>
@@ -43,7 +45,6 @@ const THIN_HISTORY_RETRY_MS = 6 * HOUR_MS
 let store = migrateStore(readJsonSync<Store>('vessels-api.json', emptyStore()))
 let inflight: Promise<void> | null = null
 let historyInflight: Promise<void> | null = null
-let lastFailAt: number | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function emptyStore(): Store {
@@ -51,6 +52,8 @@ function emptyStore(): Store {
     lastFetchAt: null,
     lastAttemptAt: null,
     lastError: null,
+    lastFailAt: null,
+    lastFailWasRate: false,
     intervalMinutes: null,
     fixes: {},
     historyAt: {},
@@ -149,17 +152,21 @@ function nextHistoryTs(): number | null {
 }
 
 export function vesselsApiStatus(): VesselsApiStatus {
+  clearExpiredBackoff()
   const next = nextFetchTs()
   const nextHistory = nextHistoryTs()
+  const limitedUntil = rateLimitedUntil()
   return {
     configured: vesselsConfigured(),
     intervalMinutes: vesselsIntervalMinutes(),
     lastFetchAt: store.lastFetchAt ? new Date(store.lastFetchAt).toISOString() : null,
+    lastAttemptAt: store.lastAttemptAt ? new Date(store.lastAttemptAt).toISOString() : null,
     nextFetchAt: next ? new Date(next).toISOString() : null,
     lastHistoryAt: store.lastHistoryAt ? new Date(store.lastHistoryAt).toISOString() : null,
     nextHistoryAt: nextHistory ? new Date(nextHistory).toISOString() : null,
     lastError: store.lastError,
     lastHistoryError: store.lastHistoryError,
+    rateLimitedUntil: limitedUntil ? new Date(limitedUntil).toISOString() : null,
     vesselCount: listFleet().length,
     pinConfigured: pinConfigured(),
   }
@@ -170,16 +177,43 @@ function isRateLimitText(value: string | null | undefined): boolean {
   return text.includes('too many') || text.includes('rate limit') || text.includes('429')
 }
 
+function failWindowMs(): number {
+  return store.lastFailWasRate ? RATE_LIMIT_BACKOFF_MS : FAIL_BACKOFF_MS
+}
+
+function rateLimitedUntil(): number | null {
+  if (!store.lastFailAt) return null
+  const until = store.lastFailAt + failWindowMs()
+  return Date.now() < until ? until : null
+}
+
+function clearExpiredBackoff(): void {
+  if (store.lastFailAt && Date.now() < store.lastFailAt + failWindowMs()) return
+  let changed = false
+  if (isRateLimitText(store.lastError)) {
+    store.lastError = null
+    changed = true
+  }
+  if (isRateLimitText(store.lastHistoryError)) {
+    store.lastHistoryError = null
+    changed = true
+  }
+  if (store.lastFailAt) {
+    store.lastFailAt = null
+    store.lastFailWasRate = false
+    changed = true
+  }
+  if (changed) persist()
+}
+
 function rateLimited(): boolean {
-  if (!lastFailAt) return false
-  const windowMs = isRateLimitText(store.lastError) || isRateLimitText(store.lastHistoryError)
-    ? RATE_LIMIT_BACKOFF_MS
-    : FAIL_BACKOFF_MS
-  return Date.now() - lastFailAt < windowMs
+  clearExpiredBackoff()
+  return rateLimitedUntil() != null
 }
 
 function markFail(error: string, historyOnly = false): void {
-  lastFailAt = Date.now()
+  store.lastFailAt = Date.now()
+  store.lastFailWasRate = isRateLimitText(error)
   if (historyOnly) store.lastHistoryError = error
   else store.lastError = error
 }
@@ -272,13 +306,16 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
     }
     store.lastFetchAt = Date.now()
     store.lastError = applied === 0 ? 'no_position' : null
-    lastFailAt = applied === 0 ? Date.now() : null
+    store.lastFailAt = applied === 0 ? Date.now() : null
+    store.lastFailWasRate = false
+    if (!store.lastError && isRateLimitText(store.lastHistoryError)) store.lastHistoryError = null
     persist()
     console.log(`Vessels API fleet ${applied}/${ships.length} at ${new Date(store.lastFetchAt).toISOString()}`)
   } catch (error) {
     store.lastAttemptAt = Date.now()
     store.lastError = error instanceof Error ? error.message : 'network_error'
-    lastFailAt = Date.now()
+    store.lastFailAt = Date.now()
+    store.lastFailWasRate = isRateLimitText(store.lastError)
     persist()
     console.warn('Vessels API error:', store.lastError)
   }

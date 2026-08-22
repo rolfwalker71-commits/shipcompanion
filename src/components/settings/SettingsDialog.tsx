@@ -137,15 +137,21 @@ export function SettingsDialog({
 
   function vesselsLine(): string {
     if (!vesselsApi?.configured) return t('trackingVesselsOff')
-    const rate =
-      /too many|rate limit|429/i.test(vesselsApi.lastError ?? '') ||
-      /too many|rate limit|429/i.test(vesselsApi.lastHistoryError ?? '')
-    if (rate) return t('trackingVesselsRate')
+    const limitedUntil = vesselsApi.rateLimitedUntil ? Date.parse(vesselsApi.rateLimitedUntil) : 0
+    if (limitedUntil > Date.now()) {
+      return t('trackingVesselsRate', { when: formatWhen(vesselsApi.rateLimitedUntil, locale) })
+    }
     if (vesselsApi.lastError) {
       return t('trackingVesselsError', { error: vesselsApi.lastError })
     }
     const when = vesselsApi.nextFetchAt ? formatWhen(vesselsApi.nextFetchAt, locale) : t('trackingDockedSoon')
-    const line = t('trackingVesselsOn', { minutes: vesselsApi.intervalMinutes, when, count: vesselsApi.vesselCount })
+    const last = vesselsApi.lastFetchAt ? formatWhen(vesselsApi.lastFetchAt, locale) : t('trackingDockedSoon')
+    const line = t('trackingVesselsOn', {
+      minutes: vesselsApi.intervalMinutes,
+      when,
+      last,
+      count: vesselsApi.vesselCount,
+    })
     if (vesselsApi.lastHistoryError) {
       return `${line} ${t('trackingVesselsHistoryError', { error: vesselsApi.lastHistoryError })}`
     }

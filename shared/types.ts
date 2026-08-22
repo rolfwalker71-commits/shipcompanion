@@ -144,11 +144,13 @@ export type VesselsApiStatus = {
   configured: boolean
   intervalMinutes: number
   lastFetchAt: string | null
+  lastAttemptAt: string | null
   nextFetchAt: string | null
   lastHistoryAt: string | null
   nextHistoryAt: string | null
   lastError: string | null
   lastHistoryError: string | null
+  rateLimitedUntil: string | null
   vesselCount: number
   pinConfigured: boolean
 }

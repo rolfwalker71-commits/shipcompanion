@@ -523,17 +523,12 @@ function historyBags(data: Record<string, unknown>): unknown[][] {
   const push = (value: unknown) => {
     if (Array.isArray(value) && value.length) bags.push(value)
   }
+  // Only actual position samples. Planned route.path/track crosses land and must not be drawn.
   push(data.position_history)
   push(data.positionHistory)
   push(data.history)
-  push(data.positions)
-  push(data.track)
-  push(data.track_points)
   if (isRecord(data.route)) {
     push(data.route.position_history)
-    push(data.route.positions)
-    push(data.route.track)
-    push(data.route.path)
   }
   return bags
 }

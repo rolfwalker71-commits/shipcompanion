@@ -234,6 +234,14 @@ function stampOf(point: GeoPoint): Stamped | null {
   return { lat: point.lat, lng: point.lng, ts }
 }
 
+const MAX_TRACK_KN = 50
+
+function impliedKnots(from: Stamped, to: Stamped): number {
+  const hours = (to.ts - from.ts) / 3_600_000
+  if (hours <= 0) return Number.POSITIVE_INFINITY
+  return haversineKm(from, to) / hours / 1.852
+}
+
 function thinStamped(points: Stamped[]): Stamped[] {
   const sorted = [...points].sort((a, b) => a.ts - b.ts)
   const merged: Stamped[] = []
@@ -247,28 +255,25 @@ function thinStamped(points: Stamped[]): Stamped[] {
       merged[merged.length - 1] = point
       continue
     }
+    if (impliedKnots(last, point) > MAX_TRACK_KN) continue
     merged.push(point)
   }
   return merged.length > MAX_TRAIL ? merged.slice(merged.length - MAX_TRAIL) : merged
 }
 
 function mergeStampTrails(history: Stamped[], trail: GeoPoint[]): GeoPoint[] {
-  const pool: Stamped[] = [...history]
-  let lastTs = 0
-  for (const point of pool) {
-    if (point.ts > lastTs) lastTs = point.ts
-  }
+  const stampedTrail: Stamped[] = []
   for (const point of trail) {
     const stamped = stampOf(point)
-    if (stamped) {
-      pool.push(stamped)
-      if (stamped.ts > lastTs) lastTs = stamped.ts
-      continue
-    }
-    lastTs += MIN_HISTORY_MS
-    pool.push({ lat: point.lat, lng: point.lng, ts: lastTs })
+    if (stamped) stampedTrail.push(stamped)
   }
-  return thinStamped(pool)
+  if (!history.length) {
+    return stampedTrail.length ? thinStamped(stampedTrail) : trail
+  }
+  const start = Math.min(...history.map((point) => point.ts))
+  const end = Math.max(...history.map((point) => point.ts))
+  const extra = stampedTrail.filter((point) => point.ts >= start - 60_000 && point.ts <= end + 6 * 60 * 60 * 1000)
+  return thinStamped([...history, ...extra])
 }
 
 function newerFix(a: LiveFix | null, b: LiveFix | null): LiveFix | null {

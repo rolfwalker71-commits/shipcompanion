@@ -43,7 +43,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   watchMmsi(body.mmsi, body.stops)
   await refreshVesselsIfNeeded().catch(() => {})
-  await refreshHistoryIfNeeded().catch(() => {})
+  void refreshHistoryIfNeeded().catch(() => {})
   const now = new Date()
   const leg = findLeg(body.stops, now)
   if (!leg) return { error: 'no_route', status: 400 }

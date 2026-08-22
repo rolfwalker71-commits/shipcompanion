@@ -32,6 +32,7 @@ const DEFAULT_INTERVAL_MINUTES = 30
 const ALLOWED_INTERVALS = [30, 60] as const
 const MINUTE_MS = 60 * 1000
 const FAIL_BACKOFF_MS = 5 * 60 * 1000
+const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000
 const DAY_MS = 24 * 60 * 60 * 1000
 const HISTORY_DAILY_HOURS = 30
 const HISTORY_SEED_HOURS = 168
@@ -139,14 +140,33 @@ export function vesselsApiStatus(): VesselsApiStatus {
   }
 }
 
+function isRateLimitText(value: string | null | undefined): boolean {
+  const text = (value ?? '').toLowerCase()
+  return text.includes('too many') || text.includes('rate limit') || text.includes('429')
+}
+
+function rateLimited(): boolean {
+  if (!lastFailAt) return false
+  const windowMs = isRateLimitText(store.lastError) || isRateLimitText(store.lastHistoryError)
+    ? RATE_LIMIT_BACKOFF_MS
+    : FAIL_BACKOFF_MS
+  return Date.now() - lastFailAt < windowMs
+}
+
+function markFail(error: string, historyOnly = false): void {
+  lastFailAt = Date.now()
+  if (historyOnly) store.lastHistoryError = error
+  else store.lastError = error
+}
+
 export async function refreshVesselsIfNeeded(force = false): Promise<void> {
   if (!apiKey()) return
   const ships = listFleet()
     .map((trip) => tripShip(trip))
     .filter((ship): ship is NonNullable<typeof ship> => Boolean(ship?.mmsi))
   if (!ships.length) return
+  if (rateLimited()) return
   if (!force) {
-    if (lastFailAt && Date.now() - lastFailAt < FAIL_BACKOFF_MS) return
     const next = nextFetchTs()
     if (next && Date.now() < next) return
   }
@@ -163,10 +183,10 @@ export async function refreshVesselsIfNeeded(force = false): Promise<void> {
 export async function forceRefreshVessels(): Promise<{ ok: boolean; error?: string }> {
   if (!apiKey()) return { ok: false, error: 'not_configured' }
   if (!listFleet().length) return { ok: false, error: 'no_ships' }
-  lastFailAt = null
+  if (rateLimited()) return { ok: false, error: 'rate_limited' }
   await refreshVesselsIfNeeded(true)
-  await refreshHistoryIfNeeded()
-  if (store.lastError && !store.lastFetchAt) return { ok: false, error: store.lastError }
+  void refreshHistoryIfNeeded().catch(() => {})
+  if (isRateLimitText(store.lastError)) return { ok: false, error: 'rate_limited' }
   if (store.lastError) return { ok: false, error: store.lastError }
   return { ok: true }
 }
@@ -192,8 +212,8 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
     store.lastAttemptAt = Date.now()
     const text = await response.text()
     if (!response.ok) {
-      store.lastError = parseError(text) || `HTTP ${response.status}`
-      lastFailAt = Date.now()
+      const error = parseError(text) || `HTTP ${response.status}`
+      markFail(response.status === 429 || isRateLimitText(error) ? error : error)
       persist()
       console.warn('Vessels API error:', store.lastError)
       return
@@ -204,8 +224,7 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
       data?: { vessels?: unknown[] }
     }
     if (json.success === false) {
-      store.lastError = json.message || 'vessels_error'
-      lastFailAt = Date.now()
+      markFail(json.message || 'vessels_error')
       persist()
       return
     }
@@ -340,6 +359,7 @@ function navStatus(value: unknown): number | null {
 
 export async function refreshHistoryIfNeeded(): Promise<void> {
   if (!apiKey()) return
+  if (rateLimited()) return
   const ships = listFleet()
     .map((trip) => tripShip(trip))
     .filter((ship): ship is NonNullable<typeof ship> => Boolean(ship?.mmsi))
@@ -374,6 +394,10 @@ async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]
       if (!result.ok) {
         lastError = `${ship.name}: ${result.error}`
         console.warn(`Vessels API track ${ship.mmsi}:`, result.error)
+        if (isRateLimitText(result.error)) {
+          markFail(result.error, true)
+          break
+        }
         continue
       }
       const parsed = parseTrack(result.data)

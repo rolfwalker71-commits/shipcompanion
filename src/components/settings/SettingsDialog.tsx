@@ -54,7 +54,7 @@ export function SettingsDialog({
   const [vesselsBusy, setVesselsBusy] = useState(false)
   const [vesselsMsg, setVesselsMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
   const [vesselsFetchBusy, setVesselsFetchBusy] = useState(false)
-  const [vesselsFetchMsg, setVesselsFetchMsg] = useState<'ok' | 'bad' | 'forbidden' | null>(null)
+  const [vesselsFetchMsg, setVesselsFetchMsg] = useState<'ok' | 'bad' | 'forbidden' | 'rate' | null>(null)
   const [removeBusy, setRemoveBusy] = useState<string | null>(null)
   const [intervalHours, setIntervalHours] = useState('3')
   const [intervalBusy, setIntervalBusy] = useState(false)
@@ -137,6 +137,10 @@ export function SettingsDialog({
 
   function vesselsLine(): string {
     if (!vesselsApi?.configured) return t('trackingVesselsOff')
+    const rate =
+      /too many|rate limit|429/i.test(vesselsApi.lastError ?? '') ||
+      /too many|rate limit|429/i.test(vesselsApi.lastHistoryError ?? '')
+    if (rate) return t('trackingVesselsRate')
     if (vesselsApi.lastError) {
       return t('trackingVesselsError', { error: vesselsApi.lastError })
     }
@@ -179,10 +183,17 @@ export function SettingsDialog({
     setVesselsFetchMsg(null)
     void fetch('/api/vessels/fetch', { method: 'POST', credentials: 'include' })
       .then(async (res) => {
-        const data = (await res.json().catch(() => null)) as { vesselsApi?: VesselsApiStatus } | null
+        const data = (await res.json().catch(() => null)) as {
+          error?: string
+          vesselsApi?: VesselsApiStatus
+        } | null
         if (data?.vesselsApi) setVesselsApi(data.vesselsApi)
         if (res.status === 403) {
           setVesselsFetchMsg('forbidden')
+          return
+        }
+        if (res.status === 429 || data?.error === 'rate_limited') {
+          setVesselsFetchMsg('rate')
           return
         }
         if (!res.ok) {
@@ -456,7 +467,11 @@ export function SettingsDialog({
                   ) : null}
                   {vesselsFetchMsg && vesselsFetchMsg !== 'ok' ? (
                     <p className="text-sm text-destructive" role="alert">
-                      {vesselsFetchMsg === 'forbidden' ? t('settingsForbidden') : t('vesselsFetchFailed')}
+                      {vesselsFetchMsg === 'forbidden'
+                        ? t('settingsForbidden')
+                        : vesselsFetchMsg === 'rate'
+                          ? t('vesselsFetchRate')
+                          : t('vesselsFetchFailed')}
                     </p>
                   ) : null}
                 </div>

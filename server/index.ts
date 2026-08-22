@@ -303,7 +303,12 @@ app.post('/api/vessels/fetch', async (c) => {
   }
   const result = await forceRefreshVessels()
   if (!result.ok) {
-    const http = result.error === 'not_configured' || result.error === 'no_ships' ? 400 : 502
+    const http =
+      result.error === 'rate_limited'
+        ? 429
+        : result.error === 'not_configured' || result.error === 'no_ships'
+          ? 400
+          : 502
     return c.json({ error: result.error, vesselsApi: vesselsApiStatus() }, http)
   }
   return c.json({ ok: true, vesselsApi: vesselsApiStatus() })

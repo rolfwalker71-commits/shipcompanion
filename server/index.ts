@@ -43,6 +43,7 @@ import {
 } from './manual-position.ts'
 import { startTripWatch } from './watch.ts'
 import { deletePhoto, listPhotos, readPhoto, savePhoto } from './photos.ts'
+import { importItinerary, readItineraryImage } from './itinerary-import.ts'
 
 config()
 
@@ -349,6 +350,24 @@ app.delete('/api/fleet/ships/:id', async (c) => {
   if (!ok) return c.json({ error: 'not_found' }, 404)
   startTripWatch()
   return c.json({ ships: listFleet() })
+})
+
+app.post('/api/itinerary/parse', async (c) => {
+  if (sessionRole(getCookie(c, COOKIE_NAME)) !== 'admin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    text?: unknown
+    yearHint?: unknown
+    image?: unknown
+  } | null
+  const text = typeof body?.text === 'string' ? body.text : ''
+  const yearHint = typeof body?.yearHint === 'string' ? body.yearHint : undefined
+  const image = readItineraryImage(body?.image)
+  if (text.trim().length < 8 && !image) return c.json({ error: 'empty' }, 400)
+  const result = await importItinerary(text, yearHint, image)
+  if (!result.stops.length) return c.json({ error: 'unparsed', ...result }, 422)
+  return c.json(result)
 })
 
 app.get('/api/trip', (c) => {

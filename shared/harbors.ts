@@ -158,6 +158,33 @@ const harbors: Record<string, Harbor> = {
     tz: 'America/New_York',
     aliases: ['fort lauderdale', 'port everglades', 'uspef', 'fll'],
   },
+  alicante: {
+    id: 'alicante',
+    name: 'Alicante',
+    nameDe: 'Alicante',
+    lat: 38.3355,
+    lng: -0.4885,
+    tz: 'Europe/Madrid',
+    aliases: ['alicante', 'esalc', 'alc'],
+  },
+  malaga: {
+    id: 'malaga',
+    name: 'Malaga',
+    nameDe: 'Málaga',
+    lat: 36.7112,
+    lng: -4.4184,
+    tz: 'Europe/Madrid',
+    aliases: ['malaga', 'málaga', 'esagp', 'agp'],
+  },
+  cadiz: {
+    id: 'cadiz',
+    name: 'Cadiz',
+    nameDe: 'Cádiz (Sevilla)',
+    lat: 36.5342,
+    lng: -6.2875,
+    tz: 'Europe/Madrid',
+    aliases: ['cadiz', 'cádiz', 'seville', 'sevilla', 'escad', 'cad'],
+  },
 }
 
 export function allHarbors(): Harbor[] {
@@ -198,28 +225,91 @@ export function harborNear(point: GeoPoint, maxKm = 8): Harbor | null {
   return best
 }
 
+const COUNTRY_WORDS = new Set([
+  'spain',
+  'spanien',
+  'italy',
+  'italien',
+  'italia',
+  'france',
+  'frankreich',
+  'germany',
+  'deutschland',
+  'portugal',
+  'greece',
+  'griechenland',
+  'netherlands',
+  'holland',
+  'belgium',
+  'croatia',
+  'kroatien',
+  'usa',
+  'us',
+  'united',
+  'states',
+  'florida',
+  'bahamas',
+  'mexico',
+  'jamaica',
+  'uk',
+  'england',
+  'brazil',
+  'brasil',
+])
+
 export function matchHarbor(raw: string | null | undefined): Harbor | null {
   const cleaned = raw?.replace(/@+/g, ' ').replace(/[_/]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (!cleaned || cleaned.length < 2) return null
-  const needle = normalizeHarbor(cleaned)
+  const needle = stripCountries(normalizeHarbor(cleaned))
   if (!needle) return null
-  return (
-    allHarbors().find((harbor) =>
-      harborLabels(harbor).some((label) => labelsMatch(needle, label)),
-    ) ?? null
-  )
+  let best: Harbor | null = null
+  let bestScore = 0
+  for (const harbor of allHarbors()) {
+    const score = Math.max(
+      ...harborLabels(harbor).map((label) => scoreHarbor(needle, normalizeHarbor(label))),
+    )
+    if (score > bestScore) {
+      best = harbor
+      bestScore = score
+    }
+  }
+  return bestScore >= 50 ? best : null
 }
 
 function harborLabels(harbor: Harbor): string[] {
   return [harbor.id, harbor.name, harbor.nameDe, ...harbor.aliases]
 }
 
-function labelsMatch(needle: string, label: string): boolean {
-  const hay = normalizeHarbor(label)
-  if (!hay) return false
-  if (hay === needle || hay.includes(needle) || needle.includes(hay)) return true
-  const parts = needle.split(' ').filter((part) => part.length >= 3)
-  return parts.some((part) => hay.split(' ').some((token) => token.includes(part) || part.includes(token)))
+function scoreHarbor(needle: string, hay: string): number {
+  if (!hay) return 0
+  if (hay === needle) return 100
+  const nParts = tokensOf(needle)
+  const hParts = tokensOf(hay)
+  if (nParts.length && nParts.every((part) => hParts.includes(part))) return 80
+  if (hParts.length && hParts.every((part) => nParts.includes(part))) return 75
+  if (needle.length >= 4 && hay.includes(needle)) return 70
+  if (hay.length >= 5 && needle.includes(hay)) return 60
+  const hits = nParts.filter((part) =>
+    hParts.some(
+      (token) =>
+        token === part ||
+        (part.length >= 5 && token.length >= 5 && (token.includes(part) || part.includes(token))),
+    ),
+  ).length
+  return hits && hits === nParts.length ? 50 : 0
+}
+
+function tokensOf(value: string): string[] {
+  return value.split(' ').filter((part) => part.length >= 3)
+}
+
+function stripCountries(value: string): string {
+  const stripped = value
+    .split(' ')
+    .filter((part) => !COUNTRY_WORDS.has(part))
+    .join(' ')
+    .trim()
+  return stripped || value
 }
 
 function normalizeHarbor(value: string): string {

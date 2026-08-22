@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import { ClipboardPaste, ImagePlus, Plus, Trash2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { CUSTOM_SHIP_ID, cruiseLines, shipById, shipsForLine, tripShip } from '@shared/ships.ts'
 import { itineraryPresets, presetById, stopsForTrip } from '@shared/itineraries.ts'
 import { allHarbors, harborIdFromStop, harborStop, harborTz } from '@shared/harbors.ts'
 import { harborLocalToIso, isoToHarborLocal } from '@shared/time.ts'
+import type { ParseItineraryResult } from '@shared/itinerary-parse.ts'
 import type { PortStop, Trip } from '@shared/types.ts'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -26,6 +28,12 @@ type DraftStop = {
   arriveTime: string
   departDate: string
   departTime: string
+}
+
+type PasteImage = {
+  mime: string
+  data: string
+  previewUrl: string
 }
 
 type TripSetupDialogProps = {
@@ -53,6 +61,16 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
   const [customImo, setCustomImo] = useState('')
   const [busy, setBusy] = useState(false)
   const [saveError, setSaveError] = useState(false)
+  const [pasteText, setPasteText] = useState('')
+  const [pasteImage, setPasteImage] = useState<PasteImage | null>(null)
+  const [parseBusy, setParseBusy] = useState(false)
+  const [parseNote, setParseNote] = useState<'ok' | 'fail' | 'empty' | null>(null)
+  const [parsePorts, setParsePorts] = useState(0)
+  const [parseSea, setParseSea] = useState(0)
+  const [parseUnmatched, setParseUnmatched] = useState<string[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
+  const startDateRef = useRef(startDate)
+  startDateRef.current = startDate
 
   const lineShips = shipsForLine(lineId)
   const harbors = useMemo(
@@ -81,6 +99,16 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
     setCustomImo(trip?.imo || trip?.customShip?.imo || current?.imo || '')
     setSaveError(false)
     setBusy(false)
+    setPasteText('')
+    setPasteImage((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl)
+      return null
+    })
+    setParseBusy(false)
+    setParseNote(null)
+    setParsePorts(0)
+    setParseSea(0)
+    setParseUnmatched([])
   }, [lines, open, trip])
 
   function changeLine(id: string) {
@@ -139,6 +167,86 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
   function removeStop(key: string) {
     setDraftStops((rows) => rows.filter((row) => row.key !== key))
     setPresetId((current) => (current === 'ais' ? current : 'custom'))
+  }
+
+  function clearPasteImage() {
+    setPasteImage((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl)
+      return null
+    })
+  }
+
+  async function takeImage(file: File | undefined) {
+    if (!file || !file.type.startsWith('image/')) return
+    const next = await imageToPaste(file)
+    if (!next) return
+    setPasteImage((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl)
+      return next
+    })
+    await applyPaste({ image: next })
+  }
+
+  async function onPasteArea(event: ClipboardEvent<HTMLElement>) {
+    const image = [...event.clipboardData.items]
+      .find((item) => item.type.startsWith('image/'))
+      ?.getAsFile()
+    if (image) {
+      event.preventDefault()
+      await takeImage(image)
+      return
+    }
+    const text = event.clipboardData.getData('text')
+    if (text.trim()) setParseNote(null)
+  }
+
+  async function applyPaste(override?: { image?: PasteImage | null }) {
+    const image = override && 'image' in override ? override.image : pasteImage
+    if (!image && pasteText.trim().length < 8) {
+      setParseNote('empty')
+      return
+    }
+    setParseBusy(true)
+    setParseNote(null)
+    setParseUnmatched([])
+    try {
+      const res = await fetch('/api/itinerary/parse', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: pasteText,
+          yearHint: startDateRef.current,
+          image: image ? { mime: image.mime, data: image.data } : undefined,
+        }),
+      })
+      const data = (await res.json().catch(() => null)) as (ParseItineraryResult & { error?: string }) | null
+      if (!res.ok || !data?.stops?.length) {
+        setParseNote('fail')
+        return
+      }
+      setDraftStops(
+        data.stops.map((stop) => ({
+          key: newStopKey(),
+          harborId: stop.harborId,
+          arriveDate: stop.arriveDate,
+          arriveTime: stop.arriveTime,
+          departDate: stop.departDate,
+          departTime: stop.departTime,
+        })),
+      )
+      setStartDate(data.stops[0].arriveDate)
+      setEndDate(data.stops[data.stops.length - 1].departDate)
+      setPresetId('custom')
+      setParsePorts(data.stops.length)
+      setParseSea(data.skippedSea)
+      setParseUnmatched(data.unmatched)
+      setParseNote('ok')
+    } catch {
+      setParseNote('fail')
+    } finally {
+      setParseBusy(false)
+    }
   }
 
   async function submit() {
@@ -291,6 +399,103 @@ export function TripSetupDialog({ open, trip, onOpenChange, onSave }: TripSetupD
               <Label htmlFor="end-date">{t('endDate')}</Label>
               <DateField id="end-date" value={endDate} onChange={setEndDate} locale={locale} />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="itinerary-paste">{t('pasteLabel')}</Label>
+            <div
+              className="rounded-2xl bg-card p-3 shadow-sm ring-1 ring-border/50"
+              onPaste={(event) => void onPasteArea(event)}
+              onDragOver={(event: DragEvent<HTMLDivElement>) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'copy'
+              }}
+              onDrop={(event: DragEvent<HTMLDivElement>) => {
+                event.preventDefault()
+                void takeImage(event.dataTransfer.files[0])
+              }}
+            >
+              {pasteImage ? (
+                <div className="mb-3 overflow-hidden rounded-xl bg-muted">
+                  <img
+                    src={pasteImage.previewUrl}
+                    alt=""
+                    className="max-h-48 w-full object-contain"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-11 min-h-11 w-full whitespace-normal"
+                    disabled={parseBusy}
+                    onClick={clearPasteImage}
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                    {t('pasteImageClear')}
+                  </Button>
+                </div>
+              ) : null}
+              <textarea
+                id="itinerary-paste"
+                value={pasteText}
+                rows={pasteImage ? 3 : 6}
+                placeholder={t('pastePlaceholder')}
+                disabled={parseBusy}
+                className={cn(
+                  'flex min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-3 text-base text-foreground shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
+                )}
+                onChange={(event) => setPasteText(event.target.value)}
+                onPaste={(event) => void onPasteArea(event)}
+              />
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">{t('pasteHint')}</p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={(event) => {
+                void takeImage(event.target.files?.[0])
+                event.target.value = ''
+              }}
+            />
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full whitespace-normal"
+                disabled={parseBusy}
+                onClick={() => fileRef.current?.click()}
+              >
+                <ImagePlus className="h-4 w-4" aria-hidden />
+                {t('pasteImage')}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full whitespace-normal"
+                disabled={parseBusy}
+                onClick={() => void applyPaste()}
+              >
+                <ClipboardPaste className="h-4 w-4" aria-hidden />
+                {parseBusy ? (pasteImage ? t('pasteImageReading') : t('pasteBusy')) : t('pasteApply')}
+              </Button>
+            </div>
+            {parseNote === 'ok' ? (
+              <p className="text-sm leading-relaxed text-foreground" role="status">
+                {parseSea
+                  ? t('pasteOk', { ports: parsePorts, sea: parseSea })
+                  : t('pasteOkNone', { ports: parsePorts })}
+              </p>
+            ) : null}
+            {parseNote === 'ok' && parseUnmatched.length ? (
+              <p className="text-sm leading-relaxed text-destructive" role="status">
+                {t('pasteUnmatched', { names: parseUnmatched.join(', ') })}
+              </p>
+            ) : null}
+            {parseNote === 'fail' || parseNote === 'empty' ? (
+              <p className="text-sm text-destructive" role="alert">
+                {parseNote === 'empty' ? t('pasteEmpty') : t('pasteFail')}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <Label>{t('pocs')}</Label>
@@ -447,4 +652,47 @@ function todayYmd(): string {
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const day = String(now.getDate()).padStart(2, '0')
   return `${now.getFullYear()}-${month}-${day}`
+}
+
+async function imageToPaste(file: Blob): Promise<PasteImage | null> {
+  const compressed = await compressItineraryImage(file)
+  const data = await blobToBase64(compressed)
+  if (!data) return null
+  return {
+    mime: compressed.type || 'image/jpeg',
+    data,
+    previewUrl: URL.createObjectURL(compressed),
+  }
+}
+
+async function compressItineraryImage(file: Blob): Promise<Blob> {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const max = 1800
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.88))
+    return blob ?? file
+  } catch {
+    return file
+  }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const comma = result.indexOf(',')
+      resolve(comma >= 0 ? result.slice(comma + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
 }

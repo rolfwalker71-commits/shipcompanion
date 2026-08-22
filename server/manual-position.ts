@@ -1,3 +1,4 @@
+import { ingestFix } from './ais.ts'
 import { armSkipNextDockedFetch } from './datadocked.ts'
 import { readJsonSync, writeJson } from './persist.ts'
 
@@ -184,6 +185,9 @@ export function saveManualFix(input: {
   persistRoute()
 
   armSkipNextDockedFetch()
+  if (key) {
+    ingestFix(key, { lat, lng, ts: now }, 'external')
+  }
   return { ok: true, fix }
 }
 

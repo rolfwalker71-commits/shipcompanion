@@ -165,6 +165,7 @@ export async function forceRefreshVessels(): Promise<{ ok: boolean; error?: stri
   if (!listFleet().length) return { ok: false, error: 'no_ships' }
   lastFailAt = null
   await refreshVesselsIfNeeded(true)
+  await refreshHistoryIfNeeded()
   if (store.lastError && !store.lastFetchAt) return { ok: false, error: store.lastError }
   if (store.lastError) return { ok: false, error: store.lastError }
   return { ok: true }
@@ -346,7 +347,7 @@ export async function refreshHistoryIfNeeded(): Promise<void> {
   const due = ships.filter((ship) => {
     if (vesselsHistoryCount(ship.mmsi) === 0) {
       const lastTry = store.historyTriedAt[ship.mmsi] ?? 0
-      return lastTry === 0 || Date.now() - lastTry >= DAY_MS
+      return lastTry === 0 || Date.now() - lastTry >= 30 * MINUTE_MS
     }
     const last = store.historyAt[ship.mmsi] ?? 0
     return Date.now() - last >= DAY_MS

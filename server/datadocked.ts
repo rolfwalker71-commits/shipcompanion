@@ -1,4 +1,5 @@
 import type { DataDockedStatus } from '../shared/types.ts'
+import { ingestFix } from './ais.ts'
 import { readJsonSync, writeJson } from './persist.ts'
 
 export type DockedFix = {
@@ -335,6 +336,15 @@ async function fetchLocation(mmsi: string): Promise<FetchOutcome> {
       if (mmsi) store.lastFixes[mmsi] = fix
       lastFailAt = null
       gapFetchAt = Date.now()
+      ingestFix(mmsi, {
+        lat: fix.lat,
+        lng: fix.lng,
+        ts: fix.ts,
+        sog: fix.sog,
+        cog: fix.cog,
+        heading: fix.heading,
+        navStatus: fix.navStatus,
+      }, 'external')
       console.log(
         `DataDocked ${fix.source} ${new Date(fix.ts).toISOString()} ${fix.lat.toFixed(3)},${fix.lng.toFixed(3)}`,
       )

@@ -254,9 +254,19 @@ function thinStamped(points: Stamped[]): Stamped[] {
 
 function mergeStampTrails(history: Stamped[], trail: GeoPoint[]): GeoPoint[] {
   const pool: Stamped[] = [...history]
+  let lastTs = 0
+  for (const point of pool) {
+    if (point.ts > lastTs) lastTs = point.ts
+  }
   for (const point of trail) {
     const stamped = stampOf(point)
-    if (stamped) pool.push(stamped)
+    if (stamped) {
+      pool.push(stamped)
+      if (stamped.ts > lastTs) lastTs = stamped.ts
+      continue
+    }
+    lastTs += MIN_HISTORY_MS
+    pool.push({ lat: point.lat, lng: point.lng, ts: lastTs })
   }
   return thinStamped(pool)
 }

@@ -11,6 +11,7 @@ import {
 } from './datadocked.ts'
 import {
   lastVesselsFix,
+  refreshHistoryIfNeeded,
   refreshVesselsIfNeeded,
   vesselsApiStatus,
   vesselsConfigured,
@@ -42,6 +43,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   watchMmsi(body.mmsi, body.stops)
   await refreshVesselsIfNeeded().catch(() => {})
+  await refreshHistoryIfNeeded().catch(() => {})
   const now = new Date()
   const leg = findLeg(body.stops, now)
   if (!leg) return { error: 'no_route', status: 400 }

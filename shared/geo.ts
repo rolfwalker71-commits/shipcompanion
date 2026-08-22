@@ -118,7 +118,8 @@ export function alignLegToFix(stops: PortStop[], now: Date, fix: GeoPoint): Rout
   const latest = [...cluster].sort(
     (a, b) => new Date(b.stop.arriveAt).getTime() - new Date(a.stop.arriveAt).getTime(),
   )[0]
-  const chosen = inWindow ?? upcoming ?? latest
+  const stillThere = latest && nearPort(fix, latest.stop, 8) ? latest : null
+  const chosen = inWindow ?? upcoming ?? stillThere
   if (!chosen) return scheduled
 
   const docked = nearPort(fix, chosen.stop, 8)

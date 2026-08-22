@@ -83,3 +83,44 @@ export function resolveAisDestination(
   if (stop) return locale === 'de' ? stop.nameDe : stop.name
   return prettyAisDestination(cleaned)
 }
+
+const STALE_ETA_MS = 8 * 60 * 60 * 1000
+
+/** AIS destination is a free-text field officers often forget to update. */
+export function sanitizeVoyage(
+  destination: string | null,
+  eta: string | null,
+  nearby: { here?: string | null; lastPort?: string | null; now?: Date } = {},
+): { destination: string | null; eta: string | null } {
+  const now = nearby.now?.getTime() ?? Date.now()
+  const etaTs = eta ? Date.parse(eta) : Number.NaN
+  const hasEta = Number.isFinite(etaTs)
+  if (hasEta && etaTs < now - STALE_ETA_MS) {
+    return { destination: null, eta: null }
+  }
+  if (!destination) return { destination: null, eta: hasEta ? eta : null }
+  if (sameReportedPort(destination, nearby.here) || sameReportedPort(destination, nearby.lastPort)) {
+    return { destination: null, eta: null }
+  }
+  return { destination, eta: hasEta ? eta : null }
+}
+
+function sameReportedPort(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false
+  const harborA = matchHarbor(a)
+  const harborB = matchHarbor(b)
+  if (harborA && harborB) return harborA.id === harborB.id
+  const left = a
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+  const right = b
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+  return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)))
+}

@@ -1,5 +1,5 @@
 import type { DataDockedStatus } from '../shared/types.ts'
-import { ingestFix } from './ais.ts'
+import { ingestFix, rememberVoyage } from './ais.ts'
 import { readJsonSync, writeJson } from './persist.ts'
 
 export type DockedFix = {
@@ -9,6 +9,7 @@ export type DockedFix = {
   source: 'TER' | 'SAT'
   destination: string | null
   eta: string | null
+  lastPort: string | null
   sog: number | null
   cog: number | null
   heading: number | null
@@ -345,6 +346,14 @@ async function fetchLocation(mmsi: string): Promise<FetchOutcome> {
         heading: fix.heading,
         navStatus: fix.navStatus,
       }, 'external')
+      if (fix.destination || fix.eta || fix.lastPort) {
+        rememberVoyage(mmsi, {
+          destination: fix.destination,
+          eta: fix.eta,
+          name: null,
+          lastPort: fix.lastPort,
+        })
+      }
       console.log(
         `DataDocked ${fix.source} ${new Date(fix.ts).toISOString()} ${fix.lat.toFixed(3)},${fix.lng.toFixed(3)}`,
       )
@@ -448,6 +457,12 @@ function parseFix(data: unknown): DockedFix | null {
     source: parseSource(row.dataSource),
     destination: typeof row.destination === 'string' && row.destination.trim() ? row.destination.trim() : null,
     eta: etaTs ? new Date(etaTs).toISOString() : null,
+    lastPort:
+      typeof row.lastPort === 'string' && row.lastPort.trim()
+        ? row.lastPort.trim()
+        : typeof row.last_port === 'string' && row.last_port.trim()
+          ? row.last_port.trim()
+          : null,
     sog: sogRaw != null && sogRaw >= 0 && sogRaw < 80 ? sogRaw : null,
     cog: cogRaw != null && cogRaw >= 0 && cogRaw < 360 ? cogRaw : null,
     heading,

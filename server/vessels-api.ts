@@ -11,6 +11,7 @@ function pinConfigured(): boolean {
 export type VesselsFix = LiveFix & {
   destination: string | null
   eta: string | null
+  lastPort: string | null
   name: string | null
 }
 
@@ -310,11 +311,12 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
       if (previous && parsed.fix.ts + 5_000 < previous.ts) continue
       store.fixes[mmsi] = parsed.fix
       ingestFix(mmsi, parsed.fix, 'external')
-      if (parsed.fix.destination || parsed.fix.eta || parsed.fix.name) {
+      if (parsed.fix.destination || parsed.fix.eta || parsed.fix.name || parsed.fix.lastPort) {
         rememberVoyage(mmsi, {
           destination: parsed.fix.destination,
           eta: parsed.fix.eta,
           name: parsed.fix.name,
+          lastPort: parsed.fix.lastPort,
         })
       }
       applied += 1
@@ -367,6 +369,17 @@ function parseVessel(raw: unknown): { mmsi: string; imo: string; fix: VesselsFix
     readText(route?.destination_port) ??
     readText(position.destination) ??
     null
+  const visits = Array.isArray(row.last_port_visits)
+    ? row.last_port_visits
+    : Array.isArray(vessel.last_port_visits)
+      ? vessel.last_port_visits
+      : []
+  const lastVisit = isRecord(visits[0]) ? visits[0] : null
+  const lastPort =
+    readText(route?.departure_port) ??
+    readText(lastVisit?.port_name) ??
+    readText(lastVisit?.name) ??
+    null
   const etaRaw = route?.eta ?? position.eta
   const etaTs = parseUtc(etaRaw)
   const ts =
@@ -389,6 +402,7 @@ function parseVessel(raw: unknown): { mmsi: string; imo: string; fix: VesselsFix
       navStatus: navStatus(position.navigational_status),
       destination: dest,
       eta: etaTs ? new Date(etaTs).toISOString() : null,
+      lastPort,
       name: readText(row.name ?? vessel.name),
     },
   }
@@ -520,13 +534,20 @@ async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]
       }
       if (parsed.history.length) ingestHistory(ship.mmsi, parsed.history, hours === HISTORY_SEED_HOURS)
       if (parsed.fix) {
-        store.fixes[ship.mmsi] = { ...parsed.fix, destination: parsed.destination, eta: parsed.eta, name: parsed.name }
+        store.fixes[ship.mmsi] = {
+          ...parsed.fix,
+          destination: parsed.destination,
+          eta: parsed.eta,
+          lastPort: parsed.lastPort,
+          name: parsed.name,
+        }
         ingestFix(ship.mmsi, parsed.fix, 'external')
-        if (parsed.destination || parsed.eta || parsed.name) {
+        if (parsed.destination || parsed.eta || parsed.name || parsed.lastPort) {
           rememberVoyage(ship.mmsi, {
             destination: parsed.destination,
             eta: parsed.eta,
             name: parsed.name,
+            lastPort: parsed.lastPort,
           })
         }
       }
@@ -588,8 +609,15 @@ function isMissingIdentifier(error: string): boolean {
 
 function parseTrack(
   data: unknown,
-): { history: LiveFix[]; fix: LiveFix | null; destination: string | null; eta: string | null; name: string | null } {
-  const empty = { history: [] as LiveFix[], fix: null, destination: null, eta: null, name: null }
+): {
+  history: LiveFix[]
+  fix: LiveFix | null
+  destination: string | null
+  eta: string | null
+  lastPort: string | null
+  name: string | null
+} {
+  const empty = { history: [] as LiveFix[], fix: null, destination: null, eta: null, lastPort: null, name: null }
   if (!isRecord(data)) return empty
   const vessel = isRecord(data.vessel) ? data.vessel : data
   const current = isRecord(data.current_position)
@@ -615,11 +643,14 @@ function parseTrack(
   history.sort((a, b) => a.ts - b.ts)
   const dest = readText(route?.destination_port) ?? readText(current?.destination)
   const etaTs = parseUtc(route?.eta ?? current?.eta)
+  const visits = Array.isArray(data.last_port_visits) ? data.last_port_visits : []
+  const lastVisit = isRecord(visits[0]) ? visits[0] : null
   return {
     history,
     fix,
     destination: dest,
     eta: etaTs ? new Date(etaTs).toISOString() : null,
+    lastPort: readText(route?.departure_port) ?? readText(lastVisit?.port_name) ?? null,
     name: readText(vessel.name),
   }
 }

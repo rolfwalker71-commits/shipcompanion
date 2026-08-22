@@ -18,6 +18,7 @@ export type VoyageData = {
   destination: string | null
   eta: string | null
   name: string | null
+  lastPort?: string | null
 }
 
 type Stamped = GeoPoint & { ts: number }
@@ -48,6 +49,7 @@ type CachedTrack = {
   actualDepartures?: Record<string, number>
   destination?: string | null
   eta?: string | null
+  lastPort?: string | null
   shipName?: string | null
   trail?: GeoPoint[]
   history?: Stamped[]
@@ -183,11 +185,12 @@ async function loadCache(): Promise<void> {
         fix,
         aisFix: fix && typeof row.aisTs === 'number' ? { ...fix, ts: row.aisTs } : fix,
         voyage:
-          row.destination || row.eta || row.shipName
+          row.destination || row.eta || row.shipName || row.lastPort
             ? {
                 destination: row.destination ?? null,
                 eta: row.eta ?? null,
                 name: row.shipName ?? null,
+                lastPort: row.lastPort ?? null,
               }
             : null,
         trail: trail.length ? trail : fix ? [{ lat: fix.lat, lng: fix.lng }] : [],
@@ -215,6 +218,7 @@ async function saveCache(): Promise<void> {
       actualDepartures: track.actualDepartures,
       destination: track.voyage?.destination ?? null,
       eta: track.voyage?.eta ?? null,
+      lastPort: track.voyage?.lastPort ?? null,
       shipName: track.voyage?.name ?? null,
       trail: track.trail,
       history: track.history,
@@ -407,6 +411,7 @@ export function rememberVoyage(mmsi: string, voyage: VoyageData): void {
       destination: voyage.destination ?? prev.voyage?.destination ?? null,
       eta: voyage.eta ?? prev.voyage?.eta ?? null,
       name: voyage.name ?? prev.voyage?.name ?? null,
+      lastPort: voyage.lastPort ?? prev.voyage?.lastPort ?? null,
     },
   })
   void queueSave()

@@ -1,6 +1,6 @@
 import type { AisNavState, SeenSource, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
 import { alignLegToFix, estimatedPosition, findLeg, forecastPath, haversineKm, isOffItinerary, nearPort, routePath } from '../shared/geo.ts'
-import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination } from '../shared/ais.ts'
+import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination, sanitizeVoyage } from '../shared/ais.ts'
 import { harborNear, matchHarbor } from '../shared/harbors.ts'
 import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, lastPortOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
 import {
@@ -67,12 +67,25 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
   const receivedAge = received ? nowMs - received.ts : Number.POSITIVE_INFINITY
   const receivedLive = Boolean(received && receivedAge < received.liveMs)
   const streamVoyage = voyageOf(body.mmsi)
-  const aisDestination = resolveAisDestination(
-    streamVoyage?.destination ?? vesselsFix?.destination ?? dockedFix?.destination ?? null,
-    stops,
-    body.locale,
+  const hereHarbor = received ? harborNear(received, 8) : null
+  const hereLabel = hereHarbor ? (body.locale === 'de' ? hereHarbor.nameDe : hereHarbor.name) : null
+  const rememberedPort = lastPortOf(body.mmsi)
+  const lastReported = rememberedPort
+    ? body.locale === 'de'
+      ? rememberedPort.nameDe
+      : rememberedPort.name
+    : (vesselsFix?.lastPort ?? dockedFix?.lastPort ?? streamVoyage?.lastPort ?? null)
+  const rawVoyage = sanitizeVoyage(
+    resolveAisDestination(
+      streamVoyage?.destination ?? vesselsFix?.destination ?? dockedFix?.destination ?? null,
+      stops,
+      body.locale,
+    ),
+    streamVoyage?.eta ?? vesselsFix?.eta ?? dockedFix?.eta ?? null,
+    { here: hereLabel, lastPort: lastReported, now },
   )
-  const voyageEta = streamVoyage?.eta ?? vesselsFix?.eta ?? dockedFix?.eta ?? null
+  const aisDestination = rawVoyage.destination
+  const voyageEta = rawVoyage.eta
   const voyage =
     aisDestination || voyageEta ? { destination: aisDestination, eta: voyageEta } : null
 

@@ -70,6 +70,10 @@ function toDeg(radians: number): number {
 
 /** Planned route is ignored for camera/status when GPS is farther than this from every stop. */
 export const OFF_ITINERARY_KM = 400
+/** GPS this close to a harbor can retarget the next port, even if the clock says another stop. */
+const GPS_APPROACH_KM = 180
+const GPS_WRONG_PORT_KM = 300
+const SAME_HARBOR_KM = 15
 
 export function nearestStopKm(point: GeoPoint, stops: GeoPoint[]): number | null {
   if (!stops.length) return null
@@ -79,6 +83,59 @@ export function nearestStopKm(point: GeoPoint, stops: GeoPoint[]): number | null
 export function isOffItinerary(point: GeoPoint, stops: GeoPoint[]): boolean {
   const nearest = nearestStopKm(point, stops)
   return nearest != null && nearest > OFF_ITINERARY_KM
+}
+
+function sameHarbor(a: GeoPoint, b: GeoPoint): boolean {
+  return haversineKm(a, b) < SAME_HARBOR_KM
+}
+
+/** If GPS is clearly at/near a different itinerary harbor than the clock, follow the GPS. */
+export function alignLegToFix(stops: PortStop[], now: Date, fix: GeoPoint): RouteLeg | null {
+  const scheduled = findLeg(stops, now)
+  if (!scheduled || stops.length === 0) return scheduled
+
+  const nowMs = now.getTime()
+  const scored = stops.map((stop, index) => ({ stop, index, km: haversineKm(fix, stop) }))
+  const nearest = scored.reduce((best, row) => (row.km < best.km ? row : best))
+  const scheduledKm = haversineKm(fix, scheduled.next)
+  if (
+    nearest.km > GPS_APPROACH_KM ||
+    scheduledKm <= GPS_WRONG_PORT_KM ||
+    sameHarbor(nearest.stop, scheduled.next)
+  ) {
+    return scheduled
+  }
+
+  const cluster = scored.filter((row) => sameHarbor(row.stop, nearest.stop))
+  const inWindow = cluster.find((row) => {
+    const arrive = new Date(row.stop.arriveAt).getTime()
+    const depart = new Date(row.stop.departAt).getTime()
+    return nowMs >= arrive && nowMs <= depart
+  })
+  const upcoming = [...cluster]
+    .filter((row) => nowMs <= new Date(row.stop.departAt).getTime() + 6 * 60 * 60 * 1000)
+    .sort((a, b) => new Date(a.stop.arriveAt).getTime() - new Date(b.stop.arriveAt).getTime())[0]
+  const latest = [...cluster].sort(
+    (a, b) => new Date(b.stop.arriveAt).getTime() - new Date(a.stop.arriveAt).getTime(),
+  )[0]
+  const chosen = inWindow ?? upcoming ?? latest
+  if (!chosen) return scheduled
+
+  const docked = nearPort(fix, chosen.stop, 8)
+  if (docked) {
+    return { previous: chosen.stop, next: chosen.stop, atPort: true }
+  }
+
+  const prior = stops
+    .slice(0, chosen.index)
+    .filter((stop) => !sameHarbor(stop, chosen.stop))
+    .map((stop) => ({ stop, km: haversineKm(fix, stop) }))
+    .sort((a, b) => a.km - b.km)[0]
+  return {
+    previous: prior?.stop ?? (chosen.index > 0 ? stops[chosen.index - 1] : null),
+    next: chosen.stop,
+    atPort: false,
+  }
 }
 
 export function haversineKm(a: GeoPoint, b: GeoPoint): number {
@@ -158,8 +215,9 @@ export function estimatedPosition(
   stops: PortStop[],
   now = new Date(),
   lastFix?: LastFix | null,
+  legOverride?: RouteLeg | null,
 ): { point: GeoPoint; source: PositionSource; next: PortStop; atPort: boolean } | null {
-  const leg = findLeg(stops, now)
+  const leg = legOverride ?? findLeg(stops, now)
   if (!leg) return null
 
   if (leg.atPort || !leg.previous) {

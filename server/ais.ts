@@ -361,7 +361,12 @@ function rememberPosition(mmsi: string, fix: LiveFix, markAis = true): void {
   const statusNav = navStateFromAis(fix.navStatus, null)
   let sog = fix.sog ?? inferredSog(prev.fix, fix)
   if (sog == null) sog = isStoppedNav(statusNav) ? 0 : (prev.fix?.sog ?? null)
-  const merged: LiveFix = { ...fix, sog }
+  const merged: LiveFix = {
+    ...fix,
+    sog,
+    cog: fix.cog ?? prev.fix?.cog ?? null,
+    heading: fix.heading ?? prev.fix?.heading ?? null,
+  }
   const nearby = nearestKnownPort(merged, tripStops.get(mmsi) ?? [])
   const nav = navStateFromAis(merged.navStatus, merged.sog)
   const parked = isStoppedNav(nav) || (nav === 'unknown' && Boolean(nearby) && (merged.sog == null || merged.sog < 1.2))

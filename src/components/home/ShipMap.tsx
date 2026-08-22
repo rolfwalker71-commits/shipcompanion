@@ -26,7 +26,8 @@ const AIS_RANGE_M = 40 * NM_IN_M
 const SHIP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 40" fill="currentColor" aria-hidden="true"><path d="M12 1.6c2.3 4.8 6.8 9.6 7.8 17.2v11.8c0 3.5-3.3 6.4-7.8 7.4-4.5-1-7.8-3.9-7.8-7.4V18.8C5.2 11.2 9.7 6.4 12 1.6z"/><circle cx="12" cy="20" r="2.4" fill="var(--card)"/></svg>`
 
 function shipIcon(heading: number | null) {
-  const rotate = heading == null ? '' : ` style="transform: rotate(${Math.round(heading)}deg)"`
+  const deg = heading == null || !Number.isFinite(heading) ? null : ((heading % 360) + 360) % 360
+  const rotate = deg == null ? '' : ` style="--ship-hdg: ${Math.round(deg)}deg"`
   return L.divIcon({
     className: 'cruise-div-icon',
     html: `<div class="ship-marker"${rotate}>${SHIP_SVG}</div>`,

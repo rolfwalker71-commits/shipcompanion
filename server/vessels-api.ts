@@ -309,7 +309,12 @@ async function fetchFleet(ships: { mmsi: string; imo: string; name: string }[]):
       const mmsi = matchFleetMmsi(parsed, ships)
       const previous = store.fixes[mmsi]
       if (previous && parsed.fix.ts + 5_000 < previous.ts) continue
-      store.fixes[mmsi] = parsed.fix
+      store.fixes[mmsi] = {
+        ...parsed.fix,
+        cog: parsed.fix.cog ?? previous?.cog ?? null,
+        heading: parsed.fix.heading ?? previous?.heading ?? null,
+        sog: parsed.fix.sog ?? previous?.sog ?? null,
+      }
       ingestFix(mmsi, parsed.fix, 'external')
       if (parsed.fix.destination || parsed.fix.eta || parsed.fix.name || parsed.fix.lastPort) {
         rememberVoyage(mmsi, {
@@ -396,9 +401,18 @@ function parseVessel(raw: unknown): { mmsi: string; imo: string; fix: VesselsFix
       lat,
       lng,
       ts,
-      sog: readSog(position.speed_knots ?? position.speed),
-      cog: readCourse(position.course_degrees ?? position.course),
-      heading: readCourse(position.heading_degrees ?? position.heading),
+      sog: readSog(position.speed_knots ?? position.speed ?? row.speed_knots ?? row.speed),
+      cog: readCourse(
+        position.course_degrees ??
+          position.course ??
+          position.cog ??
+          row.course_degrees ??
+          row.course ??
+          row.cog,
+      ),
+      heading: readCourse(
+        position.heading_degrees ?? position.heading ?? row.heading_degrees ?? row.heading,
+      ),
       navStatus: navStatus(position.navigational_status),
       destination: dest,
       eta: etaTs ? new Date(etaTs).toISOString() : null,
@@ -433,7 +447,12 @@ function readSog(value: unknown): number | null {
 }
 
 function readCourse(value: unknown): number | null {
-  const n = readCoord(value)
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 0 && value < 360 ? value : null
+  }
+  if (typeof value !== 'string' || !value.trim()) return null
+  const marked = value.match(/(\d+(?:[.,]\d+)?)\s*°/)
+  const n = marked ? Number(marked[1].replace(',', '.')) : readCoord(value)
   return n != null && n >= 0 && n < 360 ? n : null
 }
 
@@ -692,7 +711,7 @@ function readHistoryFix(row: unknown): LiveFix | null {
     lng,
     ts,
     sog: readSog(row.speed_knots ?? row.speed ?? pos.speed_knots ?? pos.speed),
-    cog: readCourse(row.course_degrees ?? row.course ?? pos.course_degrees ?? pos.course),
+    cog: readCourse(row.course_degrees ?? row.course ?? row.cog ?? pos.course_degrees ?? pos.course ?? pos.cog),
     heading: readCourse(row.heading_degrees ?? row.heading ?? pos.heading_degrees ?? pos.heading),
     navStatus: navStatus(row.navigational_status ?? pos.navigational_status),
   }

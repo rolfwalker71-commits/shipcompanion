@@ -1,5 +1,5 @@
 import type { AisNavState, SeenSource, SnapshotRequest, SnapshotResponse } from '../shared/types.ts'
-import { alignLegToFix, estimatedPosition, findLeg, forecastPath, haversineKm, isOffItinerary, nearPort, routePath } from '../shared/geo.ts'
+import { alignLegToFix, estimatedPosition, findLeg, forecastPath, haversineKm, headingFromTrack, isOffItinerary, nearPort, routePath } from '../shared/geo.ts'
 import { isStoppedNav, isUnderwayNav, navStateFromAis, resolveAisDestination, sanitizeVoyage } from '../shared/ais.ts'
 import { harborNear, matchHarbor } from '../shared/harbors.ts'
 import { watchMmsi, aisConfigured, waitForLive, aisError, lastKnownPosition, lastAisPosition, actualDeparture, voyageOf, lastPortOf, aisTrail, livePosition, AIS_LIVE_MS, aisFallbackGraceActive } from './ais.ts'
@@ -106,6 +106,7 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
 
   const loc = (stop: { name: string; nameDe: string }) => (body.locale === 'de' ? stop.nameDe : stop.name)
   const track = aisTrail(body.mmsi)
+  const trailCourse = headingFromTrack(track, received)
   const plan = hasPlan && clockLeg
     ? plannedView({
         stops,
@@ -165,8 +166,8 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     motion: {
       nav: view.nav,
       sogKn: received?.sog ?? null,
-      cog: received?.cog ?? null,
-      heading: received?.heading ?? received?.cog ?? null,
+      cog: received?.cog ?? trailCourse,
+      heading: received?.cog ?? received?.heading ?? trailCourse,
     },
     voyage,
     nextPort: {

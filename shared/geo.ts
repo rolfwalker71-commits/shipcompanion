@@ -148,6 +148,17 @@ export function haversineKm(a: GeoPoint, b: GeoPoint): number {
   return 2 * EARTH_KM * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
+export function headingFromTrack(track: GeoPoint[], here?: GeoPoint | null, minKm = 1.2): number | null {
+  if (track.length < 2) return null
+  const end = here ?? track[track.length - 1]
+  for (let i = track.length - 2; i >= 0; i -= 1) {
+    if (haversineKm(track[i], end) >= minKm) return bearingDeg(track[i], end)
+  }
+  const from = track[track.length - 2]
+  const to = track[track.length - 1]
+  return haversineKm(from, to) >= 0.35 ? bearingDeg(from, to) : null
+}
+
 export function bearingDeg(from: GeoPoint, to: GeoPoint): number {
   const y = Math.sin(toRad(to.lng - from.lng)) * Math.cos(toRad(to.lat))
   const x =

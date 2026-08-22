@@ -107,6 +107,8 @@ export type SnapshotResponse = {
   fromPort: string | null
   /** Live GPS is far from every planned stop (e.g. other ocean than this itinerary). */
   offItinerary: boolean
+  /** Clock says this port, but GPS is at a different itinerary harbor. */
+  scheduledPort: string | null
   distanceKm: number | null
   weather: WeatherInfo | null
   sun: { sunrise: string; sunset: string } | null

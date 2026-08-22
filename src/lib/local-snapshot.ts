@@ -58,6 +58,7 @@ export function scheduleSnapshot(trip: Trip, locale: Locale): SnapshotResponse |
     fromPort,
     distanceKm: !atPort ? Math.round(haversineKm(guessed.point, destination)) : null,
     offItinerary: false,
+    scheduledPort: null,
     weather: null,
     sun: sunTimes(guessed.point.lat, guessed.point.lng),
     shipTz: tzFromLongitude(guessed.point.lng),

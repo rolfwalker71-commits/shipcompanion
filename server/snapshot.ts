@@ -181,6 +181,8 @@ export async function buildSnapshot(body: SnapshotRequest): Promise<SnapshotResp
     forecast,
     fromPort: offItinerary ? null : !atPort && leg.previous ? loc(leg.previous) : null,
     offItinerary,
+    scheduledPort:
+      received && !offItinerary && loc(clockLeg.next) !== loc(destination) ? loc(clockLeg.next) : null,
     distanceKm: offItinerary || atPort ? null : Math.round(haversineKm(position, destination)),
     departure: departStop
       ? {

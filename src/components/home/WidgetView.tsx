@@ -49,6 +49,11 @@ export function WidgetView({ trip }: WidgetViewProps) {
                 {live ? t('live') : snapshot.tracking === 'last-known' ? t('lastKnown') : t('approx')}
               </Badge>
               <p className="break-words text-lg font-semibold leading-snug">{headline}</p>
+              {snapshot.scheduledPort ? (
+                <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                  {t('scheduledPort', { port: snapshot.scheduledPort })}
+                </p>
+              ) : null}
               {showNextLeg ? (
                 <div className="mt-1 space-y-0.5 text-sm leading-snug text-muted-foreground">
                   <p>{t('continuesTo', { name: nextName })}</p>

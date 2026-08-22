@@ -243,6 +243,11 @@ export function StatusStrip({
                   />
                 </>
               )}
+              {snapshot.scheduledPort ? (
+                <p className="mt-1 text-xs leading-snug text-muted-foreground sm:text-sm">
+                  {t('scheduledPort', { port: snapshot.scheduledPort })}
+                </p>
+              ) : null}
             </div>
             {snapshot.weather ? (
               <div

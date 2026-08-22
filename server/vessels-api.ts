@@ -1,7 +1,7 @@
 import type { VesselsApiStatus } from '../shared/types.ts'
 import { tripShip } from '../shared/ships.ts'
 import { listFleet } from './fleet-store.ts'
-import { ingestFix, ingestHistory, rememberVoyage, aisCacheReady, vesselsHistoryCount, type LiveFix } from './ais.ts'
+import { ingestFix, ingestHistory, rememberVoyage, aisCacheReady, vesselsHistoryThin, type LiveFix } from './ais.ts'
 import { readJsonSync, writeJson } from './persist.ts'
 
 function pinConfigured(): boolean {
@@ -23,6 +23,7 @@ type Store = {
   historyAt: Record<string, number>
   historyTriedAt: Record<string, number>
   historySeeded: Record<string, boolean>
+  historyWindowHours: Record<string, number>
   lastHistoryAt: number | null
   lastHistoryError: string | null
 }
@@ -34,8 +35,10 @@ const MINUTE_MS = 60 * 1000
 const FAIL_BACKOFF_MS = 5 * 60 * 1000
 const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000
 const DAY_MS = 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
 const HISTORY_DAILY_HOURS = 30
 const HISTORY_SEED_HOURS = 168
+const THIN_HISTORY_RETRY_MS = 6 * HOUR_MS
 
 let store = migrateStore(readJsonSync<Store>('vessels-api.json', emptyStore()))
 let inflight: Promise<void> | null = null
@@ -53,6 +56,7 @@ function emptyStore(): Store {
     historyAt: {},
     historyTriedAt: {},
     historySeeded: {},
+    historyWindowHours: {},
     lastHistoryAt: null,
     lastHistoryError: null,
   }
@@ -66,6 +70,8 @@ function migrateStore(raw: Store): Store {
     historyAt: raw.historyAt && typeof raw.historyAt === 'object' ? raw.historyAt : {},
     historyTriedAt: raw.historyTriedAt && typeof raw.historyTriedAt === 'object' ? raw.historyTriedAt : {},
     historySeeded: raw.historySeeded && typeof raw.historySeeded === 'object' ? raw.historySeeded : {},
+    historyWindowHours:
+      raw.historyWindowHours && typeof raw.historyWindowHours === 'object' ? raw.historyWindowHours : {},
   }
 }
 
@@ -118,9 +124,28 @@ function nextFetchTs(): number | null {
 
 function nextHistoryTs(): number | null {
   if (!apiKey()) return null
-  const stamps = [...Object.values(store.historyAt), ...Object.values(store.historyTriedAt)]
-  if (!stamps.length) return Date.now()
-  return Math.min(...stamps) + DAY_MS
+  const ships = listFleet()
+    .map((trip) => tripShip(trip))
+    .filter((ship): ship is NonNullable<typeof ship> => Boolean(ship?.mmsi))
+  if (!ships.length) return null
+  const now = Date.now()
+  let soonest = Number.POSITIVE_INFINITY
+  for (const ship of ships) {
+    const lastTry = store.historyTriedAt[ship.mmsi] ?? 0
+    const lastAt = store.historyAt[ship.mmsi] ?? 0
+    const lastWindow = store.historyWindowHours[ship.mmsi] ?? 0
+    let next = now
+    if (vesselsHistoryThin(ship.mmsi)) {
+      next =
+        lastWindow !== HISTORY_SEED_HOURS
+          ? (lastTry || now - 30 * MINUTE_MS) + 30 * MINUTE_MS
+          : Math.max(lastAt, lastTry) + THIN_HISTORY_RETRY_MS
+    } else if (lastAt) {
+      next = lastAt + DAY_MS
+    }
+    if (next < soonest) soonest = next
+  }
+  return Number.isFinite(soonest) ? soonest : now
 }
 
 export function vesselsApiStatus(): VesselsApiStatus {
@@ -364,14 +389,7 @@ export async function refreshHistoryIfNeeded(): Promise<void> {
     .map((trip) => tripShip(trip))
     .filter((ship): ship is NonNullable<typeof ship> => Boolean(ship?.mmsi))
   if (!ships.length) return
-  const due = ships.filter((ship) => {
-    if (vesselsHistoryCount(ship.mmsi) === 0) {
-      const lastTry = store.historyTriedAt[ship.mmsi] ?? 0
-      return lastTry === 0 || Date.now() - lastTry >= 30 * MINUTE_MS
-    }
-    const last = store.historyAt[ship.mmsi] ?? 0
-    return Date.now() - last >= DAY_MS
-  })
+  const due = ships.filter((ship) => historyIsDue(ship.mmsi))
   if (!due.length) return
   if (historyInflight) {
     await historyInflight
@@ -383,11 +401,23 @@ export async function refreshHistoryIfNeeded(): Promise<void> {
   await historyInflight
 }
 
+function historyIsDue(mmsi: string): boolean {
+  const lastTry = store.historyTriedAt[mmsi] ?? 0
+  const lastAt = store.historyAt[mmsi] ?? 0
+  const lastWindow = store.historyWindowHours[mmsi] ?? 0
+  if (vesselsHistoryThin(mmsi)) {
+    if (lastWindow !== HISTORY_SEED_HOURS) {
+      return lastTry === 0 || Date.now() - lastTry >= 30 * MINUTE_MS
+    }
+    return Date.now() - Math.max(lastAt, lastTry) >= THIN_HISTORY_RETRY_MS
+  }
+  return lastAt === 0 || Date.now() - lastAt >= DAY_MS
+}
+
 async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]): Promise<void> {
   let lastError: string | null = null
   for (const ship of ships) {
-    const seeded = Boolean(store.historySeeded[ship.mmsi])
-    const hours = seeded ? HISTORY_DAILY_HOURS : HISTORY_SEED_HOURS
+    const hours = vesselsHistoryThin(ship.mmsi) ? HISTORY_SEED_HOURS : HISTORY_DAILY_HOURS
     store.historyTriedAt[ship.mmsi] = Date.now()
     try {
       const result = await fetchTrackForShip(ship, hours)
@@ -413,7 +443,7 @@ async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]
       } else {
         console.log(`Vessels API track ${ship.name} ${parsed.history.length} pts (${hours}h)`)
       }
-      if (parsed.history.length) ingestHistory(ship.mmsi, parsed.history)
+      if (parsed.history.length) ingestHistory(ship.mmsi, parsed.history, hours === HISTORY_SEED_HOURS)
       if (parsed.fix) {
         store.fixes[ship.mmsi] = { ...parsed.fix, destination: parsed.destination, eta: parsed.eta, name: parsed.name }
         ingestFix(ship.mmsi, parsed.fix, 'external')
@@ -426,7 +456,8 @@ async function fetchHistory(ships: { mmsi: string; imo: string; name: string }[]
         }
       }
       store.historyAt[ship.mmsi] = Date.now()
-      store.historySeeded[ship.mmsi] = true
+      store.historyWindowHours[ship.mmsi] = hours
+      store.historySeeded[ship.mmsi] = !vesselsHistoryThin(ship.mmsi)
       store.lastHistoryAt = Date.now()
     } catch (error) {
       lastError = `${ship.name}: ${error instanceof Error ? error.message : 'network_error'}`
@@ -457,7 +488,7 @@ async function fetchTrack(
   id: { mmsi?: string; imo?: string },
   hours: number,
 ): Promise<TrackResult> {
-  const params = new URLSearchParams({ hours: String(hours) })
+  const params = new URLSearchParams({ hours: String(hours), include_route: 'false' })
   if (id.mmsi) params.set('mmsi', id.mmsi)
   else if (id.imo) params.set('imo', id.imo)
   const response = await fetch(`${BASE}/vessels/track?${params}`, {

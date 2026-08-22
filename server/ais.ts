@@ -165,7 +165,7 @@ async function loadCache(): Promise<void> {
               typeof point?.lat === 'number' && typeof point?.lng === 'number',
           )
         : []
-      const history = readHistory(row.history)
+      const history = thinStamped(readHistory(row.history))
       adoptTrack(mmsi, {
         fix,
         aisFix: fix && typeof row.aisTs === 'number' ? { ...fix, ts: row.aisTs } : fix,
@@ -271,8 +271,8 @@ function mergeStampTrails(history: Stamped[], trail: GeoPoint[]): GeoPoint[] {
     return stampedTrail.length ? thinStamped(stampedTrail) : trail
   }
   const start = Math.min(...history.map((point) => point.ts))
-  const end = Math.max(...history.map((point) => point.ts))
-  const extra = stampedTrail.filter((point) => point.ts >= start - 60_000 && point.ts <= end + 6 * 60 * 60 * 1000)
+  // Keep live trail after the last history point. Do not invent times for older unstamped AIS.
+  const extra = stampedTrail.filter((point) => point.ts >= start - 60_000)
   return thinStamped([...history, ...extra])
 }
 
@@ -306,6 +306,26 @@ export function aisCacheReady(): Promise<void> {
 
 export function vesselsHistoryCount(mmsi: string): number {
   return tracks.get(mmsi)?.history.length ?? 0
+}
+
+/** True when stored history is only a harbor cluster, not a multi-day voyage. */
+export function vesselsHistoryThin(mmsi: string): boolean {
+  const history = tracks.get(mmsi)?.history ?? []
+  if (history.length === 0) return true
+  const start = Math.min(...history.map((point) => point.ts))
+  const end = Math.max(...history.map((point) => point.ts))
+  let minLat = history[0].lat
+  let maxLat = history[0].lat
+  let minLng = history[0].lng
+  let maxLng = history[0].lng
+  for (const point of history) {
+    if (point.lat < minLat) minLat = point.lat
+    if (point.lat > maxLat) maxLat = point.lat
+    if (point.lng < minLng) minLng = point.lng
+    if (point.lng > maxLng) maxLng = point.lng
+  }
+  const coverageKm = haversineKm({ lat: minLat, lng: minLng }, { lat: maxLat, lng: maxLng })
+  return coverageKm < 80 || end - start < 36 * 60 * 60 * 1000
 }
 
 /** Record a position in the trail. AIS frames mark aisFix; Vessels API does not. */
@@ -399,7 +419,7 @@ function appendTrail(trail: GeoPoint[], fix: LiveFix, parked: boolean): GeoPoint
 }
 
 /** Merge timestamped Vessels history. Kept apart from the live AIS trail. */
-export function ingestHistory(mmsi: string, points: LiveFix[]): number {
+export function ingestHistory(mmsi: string, points: LiveFix[], replace = false): number {
   if (!mmsi || points.length === 0) return 0
   const prev = ensureTrack(mmsi)
   const incoming: Stamped[] = []
@@ -408,7 +428,8 @@ export function ingestHistory(mmsi: string, points: LiveFix[]): number {
     incoming.push({ lat: point.lat, lng: point.lng, ts: point.ts })
   }
   if (!incoming.length) return 0
-  tracks.set(mmsi, { ...prev, history: thinStamped([...prev.history, ...incoming]) })
+  const next = replace ? incoming : [...prev.history, ...incoming]
+  tracks.set(mmsi, { ...prev, history: thinStamped(next) })
   void queueSave()
   return incoming.length
 }
@@ -617,7 +638,13 @@ export function voyageOf(mmsi: string): VoyageData | null {
 export function aisTrail(mmsi: string): GeoPoint[] {
   const track = tracks.get(mmsi)
   if (!track) return []
-  return mergeStampTrails(track.history, track.trail)
+  const line = mergeStampTrails(track.history, track.trail)
+  const tip = track.fix
+  if (!tip) return line
+  const last = line[line.length - 1]
+  if (!last) return [{ lat: tip.lat, lng: tip.lng }]
+  if (haversineKm(last, tip) < MIN_TRAIL_KM) return line
+  return [...line, { lat: tip.lat, lng: tip.lng }]
 }
 
 export function actualDeparture(mmsi: string, stopId: string): number | null {
